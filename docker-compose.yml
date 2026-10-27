@@ -1,0 +1,32 @@
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: tracewright
+      POSTGRES_PASSWORD: tracewright
+      POSTGRES_DB: tracewright
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tracewright -d tracewright"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  ingest:
+    build: ./ingest
+    environment:
+      DATABASE_URL: postgres://tracewright:tracewright@postgres:5432/tracewright?sslmode=disable
+      PORT: "4318"
+    ports:
+      - "4318:4318"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    stop_grace_period: 30s
+
+volumes:
+  pgdata:
