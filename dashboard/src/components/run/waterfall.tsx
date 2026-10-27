@@ -1,7 +1,8 @@
 "use client";
 
-import { ChevronRight, CircleAlert } from "lucide-react";
+import { ChevronRight, CircleAlert, History } from "lucide-react";
 import type { KeyboardEvent, Ref } from "react";
+import { isReplayed } from "@/lib/replay";
 import { formatDuration, formatTick } from "@/lib/format";
 import { KIND_BG, KIND_LABEL } from "@/lib/kinds";
 import { SPAN_KINDS, type Span } from "@/lib/types";
@@ -111,6 +112,7 @@ function Row({
 }) {
   const { span, depth, hasChildren, collapsed, offsetPct, widthPct } = row;
   const isError = span.status === "error";
+  const replayed = isReplayed(span.attributes);
 
   return (
     <div
@@ -119,7 +121,7 @@ function Row({
       aria-level={interactive ? depth + 1 : undefined}
       aria-selected={interactive ? selected : undefined}
       aria-expanded={interactive && hasChildren ? !collapsed : undefined}
-      aria-label={`${span.name}, ${KIND_LABEL[span.kind]}, ${formatDuration(span.durationMs)}${isError ? ", error" : ""}`}
+      aria-label={`${span.name}, ${KIND_LABEL[span.kind]}, ${formatDuration(span.durationMs)}${isError ? ", error" : ""}${replayed ? ", replayed" : ""}`}
       data-span-id={span.spanId}
       onClick={interactive ? () => onSelect?.(span.spanId) : undefined}
       className={`group relative grid h-[30px] grid-cols-[var(--label-w)_1fr] ${interactive ? "cursor-pointer" : ""} ${
@@ -154,13 +156,14 @@ function Row({
           {span.name}
         </span>
         {isError && <CircleAlert className="size-3.5 shrink-0 text-err" aria-label="error" />}
+        {replayed && <ReplayedMark />}
       </div>
 
       {/* Track */}
       <div className="relative">
         <div className={`absolute inset-y-0 left-0 ${TRACK_INSET}`}>
           <span
-            className={`absolute top-1/2 h-3 -translate-y-1/2 rounded-[3px] ${isError ? "bar-error" : KIND_BG[span.kind]} ${
+            className={`absolute top-1/2 h-3 -translate-y-1/2 rounded-[3px] ${isError ? "bar-error" : KIND_BG[span.kind]} ${replayed ? "opacity-55" : ""} ${
               selected ? "ring-2 ring-fg/70 ring-offset-1 ring-offset-surface" : ""
             } ${reveal ? "reveal-bar" : ""}`}
             style={{
@@ -184,7 +187,17 @@ function Row({
   );
 }
 
-export function KindLegend() {
+/** Marks a span served from a recording during a replay instead of being executed. */
+export function ReplayedMark() {
+  return (
+    <span className="inline-flex shrink-0 items-center text-fg-subtle" title="Replayed: served from the recording, not executed">
+      <History className="size-3.5" aria-hidden />
+      <span className="sr-only">replayed</span>
+    </span>
+  );
+}
+
+export function KindLegend({ showReplayed = false }: { showReplayed?: boolean }) {
   return (
     <ul className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11.5px] text-fg-muted" aria-label="Legend">
       {SPAN_KINDS.map((k) => (
@@ -197,6 +210,12 @@ export function KindLegend() {
         <span className="bar-error h-2 w-3.5 rounded-[2px]" aria-hidden />
         Error
       </li>
+      {showReplayed && (
+        <li className="flex items-center gap-1.5">
+          <History className="size-3 text-fg-subtle" aria-hidden />
+          Replayed
+        </li>
+      )}
     </ul>
   );
 }

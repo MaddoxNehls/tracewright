@@ -5,14 +5,17 @@ import { runListQueryString, type RunListParams, type SortKey } from "@/lib/run-
 import type { RunSummary } from "@/lib/types";
 import { Chip } from "../chip";
 import { StatusBadge } from "../status";
+import { RunSelectCheckbox } from "./run-selection";
 
 interface Props {
   basePath: string;
   params: RunListParams;
   runs: RunSummary[];
+  /** Show a checkbox column for picking runs to compare (needs a surrounding <RunSelection>). */
+  selectable?: boolean;
 }
 
-export function RunTable({ basePath, params, runs }: Props) {
+export function RunTable({ basePath, params, runs, selectable = false }: Props) {
   const maxDuration = Math.max(...runs.map((r) => r.durationMs), 1);
 
   return (
@@ -20,7 +23,12 @@ export function RunTable({ basePath, params, runs }: Props) {
       <table className="w-full min-w-[1340px] border-collapse text-[13px]">
         <thead>
           <tr className="border-b border-border text-left text-xs text-fg-subtle">
-            <Th className="w-[84px] pl-4">Status</Th>
+            {selectable && (
+              <th className="w-9 pl-4">
+                <span className="sr-only">Select</span>
+              </th>
+            )}
+            <Th className={`w-[84px] ${selectable ? "pl-2" : "pl-4"}`}>Status</Th>
             <Th>Run</Th>
             <SortTh basePath={basePath} params={params} sortKey="started" className="w-[150px]">
               Started
@@ -46,7 +54,14 @@ export function RunTable({ basePath, params, runs }: Props) {
               key={run.traceId}
               className="relative border-b border-border transition-colors last:border-b-0 hover:bg-surface-2 focus-within:bg-surface-2"
             >
-              <td className="py-2.5 pl-4 pr-3 align-top">
+              {selectable && (
+                <td className="py-2.5 pl-4 align-top">
+                  <span className="flex h-[18px] items-center">
+                    <RunSelectCheckbox run={{ traceId: run.traceId, name: run.name, startTime: run.startTime }} />
+                  </span>
+                </td>
+              )}
+              <td className={`py-2.5 pr-3 align-top ${selectable ? "pl-2" : "pl-4"}`}>
                 <StatusBadge status={run.status} />
               </td>
               <td className="max-w-0 py-2.5 pr-3 align-top">

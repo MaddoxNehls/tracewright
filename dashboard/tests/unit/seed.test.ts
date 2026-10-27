@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { generateDemoRuns } from "@/seed/research-agent";
+import { PRICES } from "@/server/pricing";
+
 
 describe("demo data generator", () => {
-  const runs = generateDemoRuns(Date.UTC(2026, 9, 27));
+  const runs = generateDemoRuns(Date.UTC(2026, 9, 27), PRICES);
 
   it("is deterministic", () => {
-    expect(generateDemoRuns(Date.UTC(2026, 9, 27))).toEqual(runs);
+    expect(generateDemoRuns(Date.UTC(2026, 9, 27), PRICES)).toEqual(runs);
   });
 
   it("produces well-formed traces that satisfy the wire contract", () => {

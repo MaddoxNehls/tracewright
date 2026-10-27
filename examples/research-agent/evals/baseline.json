@@ -1,0 +1,394 @@
+{
+  "version": 1,
+  "suite": "research-agent",
+  "created_at": "2026-10-27T22:06:31+00:00",
+  "git": {
+    "sha": "4c049c57d58bdf931e914072df6d2611307f0519",
+    "branch": "main"
+  },
+  "repeat": 1,
+  "tasks": [
+    {
+      "id": "apollo-gap",
+      "input": {
+        "scenario": "apollo-gap"
+      },
+      "status": "pass",
+      "passes": 1,
+      "repeat": 1,
+      "metrics": {
+        "cost_usd": 0.017307,
+        "latency_ms": 14.1,
+        "input_tokens": 4229,
+        "output_tokens": 308,
+        "tokens": 4537,
+        "steps": 5
+      },
+      "runs": [
+        {
+          "input": {
+            "scenario": "apollo-gap"
+          },
+          "output": "The Moon landing came 12 calendar years after Sputnik 1: Sputnik 1 launched on October 4, 1957, and Apollo 11's lunar module Eagle landed on July 20, 1969 (just under 11 years and 10 months later). Neil Armstrong was the first person to walk on the Moon, followed by Buzz Aldrin. Sources: sputnik-1, apollo-11.",
+          "trace_id": "27cc48f96f0e01f8177dcfc7911bfc64",
+          "error": null,
+          "latency_ms": 14.1,
+          "steps": 5,
+          "llm_calls": 5,
+          "tool_calls": 4,
+          "input_tokens": 4229,
+          "output_tokens": 308,
+          "cost_usd": 0.017307,
+          "span_errors": [],
+          "scores": [
+            {
+              "scorer": "contains: \"12 calendar years\"",
+              "passed": true,
+              "detail": ""
+            },
+            {
+              "scorer": "contains: \"Neil Armstrong\"",
+              "passed": true,
+              "detail": ""
+            },
+            {
+              "scorer": "no_error",
+              "passed": true,
+              "detail": ""
+            },
+            {
+              "scorer": "max_steps: 5",
+              "passed": true,
+              "detail": "5 steps"
+            },
+            {
+              "scorer": "max_cost_usd: 0.05",
+              "passed": true,
+              "detail": "$0.017307"
+            },
+            {
+              "scorer": "python: \"research_agent.evals:cites_sources\"",
+              "passed": true,
+              "detail": "sputnik-1, apollo-11"
+            }
+          ],
+          "passed": true,
+          "tokens": 4537
+        }
+      ]
+    },
+    {
+      "id": "calculator-recovery",
+      "input": {
+        "scenario": "calculator-recovery"
+      },
+      "status": "pass",
+      "passes": 1,
+      "repeat": 1,
+      "metrics": {
+        "cost_usd": 0.017061,
+        "latency_ms": 5.352,
+        "input_tokens": 4412,
+        "output_tokens": 255,
+        "tokens": 4667,
+        "steps": 5
+      },
+      "runs": [
+        {
+          "input": {
+            "scenario": "calculator-recovery"
+          },
+          "output": "Apollo 11 returned about 5.6% of all Apollo lunar samples: 21.5 kg out of roughly 382 kg collected across the six landing missions. Sources: apollo-11, apollo-program-summary.",
+          "trace_id": "e876436035ba91c3b1b7a3399670610c",
+          "error": null,
+          "latency_ms": 5.352,
+          "steps": 5,
+          "llm_calls": 5,
+          "tool_calls": 4,
+          "input_tokens": 4412,
+          "output_tokens": 255,
+          "cost_usd": 0.017061,
+          "span_errors": [
+            {
+              "span": "calculator",
+              "type": "CalculatorError",
+              "message": "invalid syntax in '21.5 kg / 382 kg * 100'"
+            }
+          ],
+          "scores": [
+            {
+              "scorer": "regex: \"\\\\b5\\\\.6%\"",
+              "passed": true,
+              "detail": ""
+            },
+            {
+              "scorer": "no_error: \"run\"",
+              "passed": true,
+              "detail": ""
+            },
+            {
+              "scorer": "max_steps: 6",
+              "passed": true,
+              "detail": "5 steps"
+            }
+          ],
+          "passed": true,
+          "tokens": 4667
+        }
+      ]
+    },
+    {
+      "id": "calculator-plain-numbers",
+      "input": {
+        "scenario": "calculator-recovery",
+        "system_append": "Write calculator expressions with plain numbers only."
+      },
+      "status": "pass",
+      "passes": 1,
+      "repeat": 1,
+      "metrics": {
+        "cost_usd": 0.012795,
+        "latency_ms": 6.021,
+        "input_tokens": 3250,
+        "output_tokens": 203,
+        "tokens": 3453,
+        "steps": 4
+      },
+      "runs": [
+        {
+          "input": {
+            "scenario": "calculator-recovery",
+            "system_append": "Write calculator expressions with plain numbers only."
+          },
+          "output": "Apollo 11 returned about 5.6% of all Apollo lunar samples: 21.5 kg out of roughly 382 kg collected across the six landing missions. Sources: apollo-11, apollo-program-summary.",
+          "trace_id": "1ebb49e1a87d36c89c859493e9ea597c",
+          "error": null,
+          "latency_ms": 6.021,
+          "steps": 4,
+          "llm_calls": 4,
+          "tool_calls": 3,
+          "input_tokens": 3250,
+          "output_tokens": 203,
+          "cost_usd": 0.012795,
+          "span_errors": [],
+          "scores": [
+            {
+              "scorer": "regex: \"\\\\b5\\\\.6%\"",
+              "passed": true,
+              "detail": ""
+            },
+            {
+              "scorer": "no_error",
+              "passed": true,
+              "detail": ""
+            },
+            {
+              "scorer": "max_steps: 4",
+              "passed": true,
+              "detail": "4 steps"
+            }
+          ],
+          "passed": true,
+          "tokens": 3453
+        }
+      ]
+    },
+    {
+      "id": "calculator-careful-model",
+      "input": {
+        "scenario": "calculator-recovery",
+        "model": "mock-2"
+      },
+      "status": "pass",
+      "passes": 1,
+      "repeat": 1,
+      "metrics": {
+        "cost_usd": 0.01684,
+        "latency_ms": 5.436,
+        "input_tokens": 3195,
+        "output_tokens": 203,
+        "tokens": 3398,
+        "steps": 4
+      },
+      "runs": [
+        {
+          "input": {
+            "scenario": "calculator-recovery",
+            "model": "mock-2"
+          },
+          "output": "Apollo 11 returned about 5.6% of all Apollo lunar samples: 21.5 kg out of roughly 382 kg collected across the six landing missions. Sources: apollo-11, apollo-program-summary.",
+          "trace_id": "b6899af06c61cd574e4221a24b53b96a",
+          "error": null,
+          "latency_ms": 5.436,
+          "steps": 4,
+          "llm_calls": 4,
+          "tool_calls": 3,
+          "input_tokens": 3195,
+          "output_tokens": 203,
+          "cost_usd": 0.01684,
+          "span_errors": [],
+          "scores": [
+            {
+              "scorer": "regex: \"\\\\b5\\\\.6%\"",
+              "passed": true,
+              "detail": ""
+            },
+            {
+              "scorer": "no_error",
+              "passed": true,
+              "detail": ""
+            },
+            {
+              "scorer": "max_steps: 4",
+              "passed": true,
+              "detail": "4 steps"
+            }
+          ],
+          "passed": true,
+          "tokens": 3398
+        }
+      ]
+    },
+    {
+      "id": "parallel-lookup",
+      "input": {
+        "scenario": "parallel-lookup"
+      },
+      "status": "pass",
+      "passes": 1,
+      "repeat": 1,
+      "metrics": {
+        "cost_usd": 0.010374,
+        "latency_ms": 4.103,
+        "input_tokens": 2398,
+        "output_tokens": 212,
+        "tokens": 2610,
+        "steps": 3
+      },
+      "runs": [
+        {
+          "input": {
+            "scenario": "parallel-lookup"
+          },
+          "output": "Alan Shepard flew 23 days after Yuri Gagarin: Vostok 1 launched on April 12, 1961 and Freedom 7 on May 5, 1961. Shepard's flight was suborbital and lasted 15 minutes 22 seconds, versus Gagarin's 108-minute orbit. Sources: vostok-1-gagarin, mercury-program.",
+          "trace_id": "cbcaeaf155bbc64d3453ea449ae82b04",
+          "error": null,
+          "latency_ms": 4.103,
+          "steps": 3,
+          "llm_calls": 3,
+          "tool_calls": 3,
+          "input_tokens": 2398,
+          "output_tokens": 212,
+          "cost_usd": 0.010374,
+          "span_errors": [],
+          "scores": [
+            {
+              "scorer": "equals: \"Alan Shepard flew 23 days after Yuri Gagarin: Vostok 1 launched on April 12, 1961 and Freedom 7 on May 5, 1961. Shepard's flight was suborbital and lasted 15 minutes 22 seconds, versus Gagarin's 108-minute orbit. Sources: vostok-1-gagarin, mercury-program.\"",
+              "passed": true,
+              "detail": ""
+            },
+            {
+              "scorer": "no_error",
+              "passed": true,
+              "detail": ""
+            },
+            {
+              "scorer": "max_steps: 4",
+              "passed": true,
+              "detail": "3 steps"
+            }
+          ],
+          "passed": true,
+          "tokens": 2610
+        }
+      ]
+    },
+    {
+      "id": "apollo-gap-careful-model",
+      "input": {
+        "scenario": "apollo-gap",
+        "model": "mock-2"
+      },
+      "status": "pass",
+      "passes": 1,
+      "repeat": 1,
+      "metrics": {
+        "cost_usd": 0.023076,
+        "latency_ms": 4.027,
+        "input_tokens": 4229,
+        "output_tokens": 308,
+        "tokens": 4537,
+        "steps": 5
+      },
+      "runs": [
+        {
+          "input": {
+            "scenario": "apollo-gap",
+            "model": "mock-2"
+          },
+          "output": "The Moon landing came 12 calendar years after Sputnik 1: Sputnik 1 launched on October 4, 1957, and Apollo 11's lunar module Eagle landed on July 20, 1969 (just under 11 years and 10 months later). Neil Armstrong was the first person to walk on the Moon, followed by Buzz Aldrin. Sources: sputnik-1, apollo-11.",
+          "trace_id": "f0334751c21332fdd01bc9766f3ab571",
+          "error": null,
+          "latency_ms": 4.027,
+          "steps": 5,
+          "llm_calls": 5,
+          "tool_calls": 4,
+          "input_tokens": 4229,
+          "output_tokens": 308,
+          "cost_usd": 0.023076,
+          "span_errors": [],
+          "scores": [
+            {
+              "scorer": "contains: \"Neil Armstrong\"",
+              "passed": true,
+              "detail": ""
+            },
+            {
+              "scorer": "no_error",
+              "passed": true,
+              "detail": ""
+            },
+            {
+              "scorer": "max_steps: 5",
+              "passed": true,
+              "detail": "5 steps"
+            },
+            {
+              "scorer": "llm_judge: \"The answer gives both the year gap and who walked first.\"",
+              "passed": null,
+              "detail": "skipped: no LLM judge is configured"
+            }
+          ],
+          "passed": true,
+          "tokens": 4537
+        }
+      ]
+    }
+  ],
+  "aggregate": {
+    "tasks": 6,
+    "passed_tasks": 6,
+    "failed_tasks": 0,
+    "flaky_tasks": 0,
+    "pass_rate": 1.0,
+    "runs": 6,
+    "passed_runs": 6,
+    "cost_usd": {
+      "total": 0.097453,
+      "p50": 0.016951,
+      "p95": 0.021634
+    },
+    "latency_ms": {
+      "p50": 5.394,
+      "p95": 12.08
+    },
+    "tokens": {
+      "input": 21713,
+      "output": 1489,
+      "total": 23202
+    },
+    "steps": {
+      "total": 26
+    }
+  }
+}

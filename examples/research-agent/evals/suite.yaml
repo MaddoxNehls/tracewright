@@ -1,0 +1,69 @@
+# Dogfood regression suite for the research agent. Every task uses the deterministic
+# mock backend, so it runs in CI without API keys.
+#
+#   uv run tracewright eval run evals/suite.yaml -o results.json
+#   uv run tracewright eval compare --baseline evals/baseline.json --current results.json \
+#       --thresholds evals/thresholds.yaml
+id: research-agent
+entrypoint: research_agent.evals:answer
+
+# The mock models are free; price them like real ones so cost regressions show up.
+pricing:
+  mock-1: {input: 3.0, output: 15.0}
+  mock-2: {input: 4.0, output: 20.0}
+
+tasks:
+  - id: apollo-gap
+    input: {scenario: apollo-gap}
+    scorers:
+      - contains: "12 calendar years"
+      - contains: "Neil Armstrong"
+      - no_error
+      - max_steps: 5
+      - max_cost_usd: 0.05
+      - python: research_agent.evals:cites_sources
+
+  - id: calculator-recovery
+    # The calculator rejects the first expression; the agent recovers on its own.
+    input: {scenario: calculator-recovery}
+    scorers:
+      - regex: '\b5\.6%'
+      - no_error: run
+      - max_steps: 6  # budget for one more retry
+
+  - id: calculator-plain-numbers
+    # The system prompt hint avoids the tool error altogether.
+    input:
+      scenario: calculator-recovery
+      system_append: Write calculator expressions with plain numbers only.
+    scorers:
+      - regex: '\b5\.6%'
+      - no_error
+      - max_steps: 4
+
+  - id: calculator-careful-model
+    input: {scenario: calculator-recovery, model: mock-2}
+    scorers:
+      - regex: '\b5\.6%'
+      - no_error
+      - max_steps: 4
+
+  - id: parallel-lookup
+    input: {scenario: parallel-lookup}
+    scorers:
+      - equals: >-
+          Alan Shepard flew 23 days after Yuri Gagarin: Vostok 1 launched on April 12, 1961
+          and Freedom 7 on May 5, 1961. Shepard's flight was suborbital and lasted 15
+          minutes 22 seconds, versus Gagarin's 108-minute orbit. Sources: vostok-1-gagarin,
+          mercury-program.
+      - no_error
+      - max_steps: 4
+
+  - id: apollo-gap-careful-model
+    input: {scenario: apollo-gap, model: mock-2}
+    scorers:
+      - contains: "Neil Armstrong"
+      - no_error
+      - max_steps: 5
+      # Not implemented yet: reported as skipped, never calls a model.
+      - llm_judge: {criteria: "The answer gives both the year gap and who walked first."}

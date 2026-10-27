@@ -60,6 +60,21 @@ def test_each_run_gets_a_new_trace(exporter: InMemoryExporter) -> None:
     assert first.trace_id != second.trace_id
 
 
+def test_run_inside_a_run_joins_its_trace_and_tags_the_root(exporter: InMemoryExporter) -> None:
+    with tracewright.run("orchestrator", tags=["outer"]) as outer:
+        with tracewright.run("sub-agent", tags=["inner", "outer"]) as inner:
+            pass
+        with tracewright.run("other", tags=["more"]):
+            pass
+
+    assert inner.trace_id == outer.trace_id
+    assert inner.parent_span_id == outer.span_id
+    assert inner.kind == "agent"
+    spans = {s["name"]: s for s in exporter.spans}
+    assert spans["orchestrator"]["attributes"]["tracewright.tags"] == ["outer", "inner", "more"]
+    assert "tracewright.tags" not in spans["sub-agent"]["attributes"]
+
+
 def test_span_outside_run_starts_its_own_trace(exporter: InMemoryExporter) -> None:
     with tracewright.span("orphan") as orphan:
         pass

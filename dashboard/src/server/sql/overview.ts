@@ -74,7 +74,8 @@ SELECT
   m.model,
   count(*)::int AS runs,
   (count(*) FILTER (WHERE r.status = 'error'))::int AS errors,
-  coalesce(sum(r.total_cost_usd), 0)::float8 AS cost_usd
+  -- NULL (not 0) when no run of this model has a known price.
+  sum(r.total_cost_usd)::float8 AS cost_usd
 FROM runs r
 CROSS JOIN win
 CROSS JOIN LATERAL unnest(r.models) AS m(model)

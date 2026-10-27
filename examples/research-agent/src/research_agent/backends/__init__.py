@@ -14,9 +14,15 @@ def create_backend(
     model: str | None = None,
     scenario: str = DEFAULT_SCENARIO,
     mock_latency: float = 0.0,
+    mock_double_check: bool = False,
 ) -> Backend:
     if name == "mock":
-        return MockBackend(scenario, model=model or "mock-1", latency=mock_latency)
+        return MockBackend(
+            scenario,
+            model=model or "mock-1",
+            latency=mock_latency,
+            double_check=mock_double_check,
+        )
     if name == "anthropic":
         from research_agent.backends.anthropic_backend import DEFAULT_MODEL, AnthropicBackend
 

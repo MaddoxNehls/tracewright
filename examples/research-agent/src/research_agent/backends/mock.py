@@ -26,6 +26,7 @@ from research_agent.transcript import (
 )
 
 CAREFUL_MODEL = "mock-2"
+DOUBLE_CHECK_ENV = "RESEARCH_AGENT_MOCK_DOUBLE_CHECK"
 
 
 @dataclass(frozen=True)
@@ -213,16 +214,35 @@ DEFAULT_SCENARIO = "apollo-gap"
 _GIVE_UP = answer("I could not find a confident answer in the corpus.")
 
 
-class ScriptedAnthropic:
-    """A fake ``anthropic.Anthropic`` whose model plays a scenario's script."""
+def _double_check(prompt: Prompt) -> AssistantTurn:
+    """Repeat the previous turn's tool calls: a wasted loop that changes nothing."""
+    previous = next(m for m in reversed(prompt.transcript) if isinstance(m, AssistantTurn))
+    n = _turn_index(prompt.transcript) + 1
+    calls = [
+        ToolCall(f"call_{n}_{i}", c.name, c.arguments) for i, c in enumerate(previous.tool_calls)
+    ]
+    return AssistantTurn("Let me double-check that result before moving on.", calls)
 
-    def __init__(self, scenario: Scenario, *, latency: float = 0.0) -> None:
-        self.messages = _ScriptedMessages(scenario, latency)
+
+class ScriptedAnthropic:
+    """A fake ``anthropic.Anthropic`` whose model plays a scenario's script.
+
+    ``double_check`` makes the model re-run its first tool call once more, an extra step
+    that costs tokens without changing the answer: a regression for the eval suite to catch.
+    """
+
+    def __init__(
+        self, scenario: Scenario, *, latency: float = 0.0, double_check: bool = False
+    ) -> None:
+        steps = scenario.steps
+        if double_check:
+            steps = (steps[0], _double_check, *steps[1:])
+        self.messages = _ScriptedMessages(steps, latency)
 
 
 class _ScriptedMessages:
-    def __init__(self, scenario: Scenario, latency: float) -> None:
-        self._scenario = scenario
+    def __init__(self, steps: Sequence[ScriptStep], latency: float) -> None:
+        self._steps = steps
         self._latency = latency
 
     def create(
@@ -239,7 +259,7 @@ class _ScriptedMessages:
         transcript = _from_anthropic(messages)
         prompt = Prompt(_system_text(system), model, transcript)
         index = _turn_index(transcript)
-        steps = self._scenario.steps
+        steps = self._steps
         turn = (steps[index] if index < len(steps) else _GIVE_UP)(prompt)
         if self._latency:
             time.sleep(self._latency * (0.6 + 0.3 * (index % 3)))
@@ -317,14 +337,19 @@ class MockBackend(AnthropicBackend):
     name = "mock"
 
     def __init__(
-        self, scenario: str = DEFAULT_SCENARIO, *, model: str = "mock-1", latency: float = 0.0
+        self,
+        scenario: str = DEFAULT_SCENARIO,
+        *,
+        model: str = "mock-1",
+        latency: float = 0.0,
+        double_check: bool = False,
     ) -> None:
         if scenario not in SCENARIOS:
             raise ValueError(f"unknown scenario {scenario!r}; choose from {sorted(SCENARIOS)}")
         self.scenario = SCENARIOS[scenario]
         super().__init__(
             model,
-            client=ScriptedAnthropic(self.scenario, latency=latency),
+            client=ScriptedAnthropic(self.scenario, latency=latency, double_check=double_check),
             max_tokens=1024,
             provider="mock",
         )

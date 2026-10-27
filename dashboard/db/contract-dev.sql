@@ -2,9 +2,9 @@
 -- STANDALONE DEV ONLY. NOT CANONICAL.
 --
 -- The canonical schema is owned by the Go ingest service:
---   ingest/internal/store/migrations/*.sql
+--   ingest/internal/store/migrations/*.sql (0001_init, 0002_project_members)
 --
--- This file mirrors docs/contract.md with IF NOT EXISTS guards so the dashboard
+-- This file mirrors those migrations with IF NOT EXISTS guards so the dashboard
 -- can be developed and seeded against an empty Postgres without running ingest.
 -- If it ever disagrees with the ingest migrations, the migrations win.
 -- ============================================================================
@@ -70,3 +70,13 @@ CREATE TABLE IF NOT EXISTS runs (
 );
 
 CREATE INDEX IF NOT EXISTS runs_project_start_idx ON runs (project_id, start_time DESC);
+
+-- Mirrors 0002_project_members.sql: GitHub logins (lowercase) allowed to view a private project.
+CREATE TABLE IF NOT EXISTS project_members (
+    project_id   uuid        NOT NULL REFERENCES projects (id) ON DELETE CASCADE,
+    github_login text        NOT NULL CHECK (github_login = lower(github_login)),
+    created_at   timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (project_id, github_login)
+);
+
+CREATE INDEX IF NOT EXISTS project_members_login_idx ON project_members (github_login);

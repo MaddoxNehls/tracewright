@@ -1,0 +1,45 @@
+name: Agent eval
+
+# Runs the research agent's dogfood suite (deterministic mock backend, no API keys) on
+# every PR that could change agent behaviour, and reports regressions on the PR.
+on:
+  pull_request:
+    paths:
+      - 'sdk/python/**'
+      - 'examples/research-agent/**'
+      - '.github/actions/agent-eval/**'
+      - '.github/workflows/agent-eval.yml'
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: agent-eval-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    env:
+      # Optional: with these set, eval runs are also sent to Tracewright.
+      TRACEWRIGHT_API_KEY: ${{ secrets.TRACEWRIGHT_API_KEY }}
+      TRACEWRIGHT_ENDPOINT: ${{ vars.TRACEWRIGHT_ENDPOINT }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: '3.13'
+          enable-cache: true
+          cache-dependency-glob: examples/research-agent/uv.lock
+      - run: uv sync --locked
+        working-directory: examples/research-agent
+      - uses: ./.github/actions/agent-eval
+        with:
+          working-directory: examples/research-agent
+          command: uv run tracewright
+          suite: evals/suite.yaml
+          baseline: evals/baseline.json
+          thresholds: evals/thresholds.yaml
+          dashboard-url: ${{ vars.TRACEWRIGHT_DASHBOARD_URL }}
+          project: ${{ vars.TRACEWRIGHT_PROJECT }}

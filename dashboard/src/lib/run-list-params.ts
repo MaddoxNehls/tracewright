@@ -22,7 +22,10 @@ export interface RunListParams {
   q: string | null;
   sort: SortKey;
   dir: SortDir;
+  /** Keyset cursor: show the page after this row. */
   cursor: string | null;
+  /** Keyset cursor: show the page before this row (the "Previous page" link). */
+  before: string | null;
 }
 
 export const DEFAULT_RUN_LIST_PARAMS: RunListParams = {
@@ -33,6 +36,7 @@ export const DEFAULT_RUN_LIST_PARAMS: RunListParams = {
   sort: "started",
   dir: "desc",
   cursor: null,
+  before: null,
 };
 
 export type RawSearchParams = Record<string, string | string[] | undefined>;
@@ -57,18 +61,21 @@ export function parseRunListParams(raw: RawSearchParams): RunListParams {
     q: first(raw.q),
     sort: oneOf(first(raw.sort), SORT_KEYS) ?? DEFAULT_RUN_LIST_PARAMS.sort,
     dir: oneOf(first(raw.dir), ["asc", "desc"] as const) ?? DEFAULT_RUN_LIST_PARAMS.dir,
+    // The two cursors are exclusive; "after" wins if a hand-edited URL has both.
     cursor: first(raw.cursor),
+    before: first(raw.cursor) ? null : first(raw.before),
   };
 }
 
 /**
  * Serializes params back to a query string, omitting defaults. Any change other
- * than the cursor itself resets pagination, since a cursor is only valid for
- * the filter and sort it was issued under.
+ * than a cursor resets pagination, since a cursor is only valid for the filter
+ * and sort it was issued under. Setting one cursor clears the other.
  */
 export function runListQueryString(current: RunListParams, patch: Partial<RunListParams> = {}): string {
   const next: RunListParams = { ...current, ...patch };
   if (!("cursor" in patch)) next.cursor = null;
+  if (!("before" in patch)) next.before = null;
 
   const sp = new URLSearchParams();
   if (next.q) sp.set("q", next.q);
@@ -78,6 +85,7 @@ export function runListQueryString(current: RunListParams, patch: Partial<RunLis
   if (next.sort !== DEFAULT_RUN_LIST_PARAMS.sort) sp.set("sort", next.sort);
   if (next.dir !== DEFAULT_RUN_LIST_PARAMS.dir) sp.set("dir", next.dir);
   if (next.cursor) sp.set("cursor", next.cursor);
+  else if (next.before) sp.set("before", next.before);
   const s = sp.toString();
   return s ? `?${s}` : "";
 }

@@ -3,15 +3,20 @@
  * generated research-agent runs, written straight into `spans` and `runs`.
  *
  * Schema: for standalone dev this applies db/contract-dev.sql (IF NOT EXISTS
- * mirror of the contract). The canonical schema is the ingest service's
- * migrations; on a database migrated by ingest those statements are no-ops.
+ * mirror of the ingest migrations). The canonical schema is the ingest
+ * service's migrations; on a database migrated by ingest those statements are
+ * no-ops.
+ *
+ * Costs come from ingest's own price table (ingest/internal/pricing/pricing.json),
+ * so seeded runs cost exactly what ingest would have computed.
  *
  * Idempotent: re-running replaces the seeded projects' runs.
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import postgres from "postgres";
-import { generateDemoRuns, type GeneratedRun } from "../src/seed/research-agent";
+import { generateDemoRuns, generateDiffPairs, type GeneratedRun } from "../src/seed/research-agent";
+import { PRICES } from "../src/server/pricing";
 
 const DATABASE_URL = process.env.DATABASE_URL ?? "postgres://tracewright:tracewright@localhost:5442/tracewright";
 
@@ -77,14 +82,14 @@ async function main() {
   const root = join(import.meta.dirname, "..");
   try {
     await sql.unsafe(readFileSync(join(root, "db/contract-dev.sql"), "utf8"));
-    await sql.unsafe(readFileSync(join(root, "db/dashboard.sql"), "utf8"));
 
     const anchor = Math.floor(Date.now() / 60_000) * 60_000;
-    const demoRuns = generateDemoRuns(anchor);
+    const pairs = generateDiffPairs(anchor, PRICES);
+    const demoRuns = [...generateDemoRuns(anchor, PRICES), ...pairs.flatMap((p) => [p.baseline, p.candidate])];
     const projects: SeedProject[] = [
       { slug: "demo", name: "Research agent (demo)", isPublic: true, members: [], runs: demoRuns },
       // Private: only visible to listed GitHub logins once OAuth is configured.
-      { slug: "internal-evals", name: "Internal evals", isPublic: false, members: ["maddoxnehls"], runs: generateDemoRuns(anchor, 7).slice(-6) },
+      { slug: "internal-evals", name: "Internal evals", isPublic: false, members: ["maddoxnehls"], runs: generateDemoRuns(anchor, PRICES, 7).slice(-6) },
     ];
 
     for (const project of projects) {

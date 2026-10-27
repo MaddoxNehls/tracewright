@@ -73,6 +73,8 @@ docs/
 - `tracewright.tags`: string array, read from the root span only
 - `tracewright.cost_usd`: optional number. If absent, ingest computes it from `pricing.json` using response/request model + tokens; unknown model means null cost.
 - `tracewright.truncated`: true if the SDK truncated input or output
+- Evals (root span of each `tracewright eval` run): tags `eval:<suite>`, `eval-task:<task>`, `git:<sha>`, `branch:<branch>`; attributes `tracewright.eval.suite`, `tracewright.eval.task`, `tracewright.eval.attempt` (1-based, under `--repeat`), `vcs.ref.head.revision`, `vcs.ref.head.name`
+- A run started inside another open span joins that trace as a child `agent` span; the SDK merges its tags into the root span's `tracewright.tags`.
 - Replay (set by the SDK's `replay()`; see `sdk/python/README.md`):
   - root span: `tracewright.replay_of` (original trace id), `tracewright.replay_from_step` (int), `tracewright.replay_tools` (`"recorded"` \| `"live"`), `tracewright.replay_overrides` (object, secret-looking values replaced by `"[redacted]"`)
   - `tracewright.replayed`: true on llm/tool spans served from the recording, and on step spans whose calls were all served (false on steps with a live call)

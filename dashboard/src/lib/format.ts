@@ -71,3 +71,17 @@ export function shortId(id: string, length = 8): string {
 export function shortModel(model: string): string {
   return model.replace(/^[\w-]+\//, "").replace(/^claude-/, "");
 }
+
+/** A signed change, e.g. "+$0.032", "−1.2 s", "+3". Uses a true minus sign. */
+export function formatSigned(delta: number, format: (abs: number) => string): string {
+  if (delta === 0) return "±0";
+  return `${delta > 0 ? "+" : "−"}${format(Math.abs(delta))}`;
+}
+
+/** Relative change, e.g. "+164%", or null when the baseline is zero or unknown. */
+export function formatRatio(delta: number, base: number | null | undefined): string | null {
+  if (base == null || base === 0 || !Number.isFinite(delta / base)) return null;
+  const pct = (delta / Math.abs(base)) * 100;
+  const abs = Math.abs(pct);
+  return `${pct >= 0 ? "+" : "−"}${abs < 10 ? abs.toFixed(1) : Math.round(abs)}%`;
+}

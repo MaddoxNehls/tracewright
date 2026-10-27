@@ -2,6 +2,7 @@
 
 import { ChevronsDownUp, ChevronsUpDown } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { isReplayed } from "@/lib/replay";
 import type { Span } from "@/lib/types";
 import { ancestorPath, buildSpanTree, layoutWaterfall, timeTicks, traceWindow } from "@/lib/waterfall";
 import { SpanInspector } from "./span-inspector";
@@ -138,7 +139,7 @@ export function RunExplorer({ spans, initialSpanId }: Props) {
     <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(360px,440px)]">
       <section aria-label="Timeline" className="min-w-0 overflow-hidden rounded-lg border border-border bg-surface">
         <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b border-border px-3 py-2">
-          <KindLegend />
+          <KindLegend showReplayed={spans.some((s) => isReplayed(s.attributes))} />
           <div className="flex items-center gap-3">
             <span className="hidden text-[11.5px] text-fg-subtle xl:inline">
               <Kbd>j</Kbd> <Kbd>k</Kbd> to move, <Kbd>←</Kbd> <Kbd>→</Kbd> to fold

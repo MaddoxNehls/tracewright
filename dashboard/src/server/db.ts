@@ -27,6 +27,11 @@ function client(): Sql {
  */
 export async function query<Row extends object>(q: BuiltQuery): Promise<Row[]> {
   await connection();
+  return queryOutsideRender<Row>(q);
+}
+
+/** The same, for code that runs outside a React render (the proxy), where `connection()` doesn't apply. */
+export async function queryOutsideRender<Row extends object>(q: BuiltQuery): Promise<Row[]> {
   const rows = await client().unsafe(q.text, q.values as postgres.ParameterOrJSON<never>[]);
   return rows as unknown as Row[];
 }

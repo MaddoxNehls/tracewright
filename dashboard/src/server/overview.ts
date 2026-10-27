@@ -16,7 +16,8 @@ export interface ModelBreakdown {
   model: string;
   runs: number;
   errors: number;
-  costUsd: number;
+  /** Null when the model is not in the price table. */
+  costUsd: number | null;
 }
 
 export interface OverviewTotals {
@@ -69,6 +70,6 @@ export async function getOverview(projectId: string, days = 14): Promise<Overvie
       p50Ms: numOrNull(r.p50_ms),
       p95Ms: numOrNull(r.p95_ms),
     })),
-    models: modelRows.map((r) => ({ model: r.model, runs: r.runs, errors: r.errors, costUsd: num(r.cost_usd) })),
+    models: modelRows.map((r) => ({ model: r.model, runs: r.runs, errors: r.errors, costUsd: numOrNull(r.cost_usd) })),
   };
 }

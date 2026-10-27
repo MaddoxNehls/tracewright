@@ -1,12 +1,16 @@
-import { GithubIcon } from "@/components/github-icon";
 import Link from "next/link";
+import { DiffTree } from "@/components/compare/diff-tree";
+import { GithubIcon } from "@/components/github-icon";
 import { KindLegend, Waterfall } from "@/components/run/waterfall";
 import { SiteHeader } from "@/components/site-header";
 import { StatusBadge } from "@/components/status";
-import { formatCost, formatDuration } from "@/lib/format";
+import { compareRuns } from "@/lib/compare";
+import { visibleRowIndexes } from "@/lib/diff-rows";
+import { formatCost, formatDuration, formatSigned, formatTokens } from "@/lib/format";
 import { DEMO_PROJECT_SLUG, REPO_URL } from "@/lib/site";
 import { buildSpanTree, layoutWaterfall, timeTicks, traceWindow } from "@/lib/waterfall";
-import { generateHeroRun } from "@/seed/research-agent";
+import { generateDiffPairs, generateHeroRun } from "@/seed/research-agent";
+import { PRICES } from "@/server/pricing";
 
 const DEMO_HREF = `/p/${DEMO_PROJECT_SLUG}/runs`;
 
@@ -53,7 +57,7 @@ export default function LandingPage() {
               Read the source
             </a>
           </div>
-          <p className="mt-4 text-[13px] text-fg-subtle">No sign-in. The demo is a read-only project with 32 recorded research-agent runs.</p>
+          <p className="mt-4 text-[13px] text-fg-subtle">No sign-in. The demo is a read-only project with 38 recorded research-agent runs.</p>
         </section>
 
         <section className="relative mx-auto max-w-[1200px] px-4 pb-20 sm:px-6" aria-label="Example run">
@@ -75,11 +79,30 @@ export default function LandingPage() {
               already run.
             </Feature>
           </div>
-          <div className="mx-auto max-w-[1200px] px-4 pb-16 sm:px-6">
-            <p className="max-w-[72ch] border-l-2 border-accent pl-4 text-[14px] leading-relaxed text-fg-muted">
-              Next on the roadmap: diff two runs to find the first step where they diverged, replay a run from any step with a
-              different model or prompt, and fail CI when a change makes the agent worse, slower, or more expensive.
-            </p>
+        </section>
+
+        <section className="relative border-t border-border" aria-labelledby="diff-heading">
+          <div className="mx-auto grid max-w-[1200px] gap-10 px-4 py-20 sm:px-6 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)] lg:items-start">
+            <div className="lg:sticky lg:top-24">
+              <h2 id="diff-heading" className="max-w-[18ch] text-[30px] font-semibold leading-[1.1] tracking-[-0.02em] text-fg sm:text-[36px]">
+                Find the step where two runs part ways.
+              </h2>
+              <p className="mt-5 max-w-[52ch] text-[15px] leading-relaxed text-fg-muted">
+                Pick any two runs and Tracewright lines up their steps side by side, even when one run took extra steps or switched
+                models. It points at the first step that actually behaved differently, then shows what changed in that step&apos;s
+                input and output, line by line.
+              </p>
+              <p className="mt-4 max-w-[52ch] text-[15px] leading-relaxed text-fg-muted">
+                In this example, the only change is the model used for the final answer. Run A overflowed its context window there;
+                run B finished, at a higher cost.
+              </p>
+              <p className="mt-6 max-w-[52ch] border-l-2 border-border-strong pl-4 text-[14px] leading-relaxed text-fg-muted">
+                <span className="font-medium text-fg">Coming soon: replay.</span> Re-run a recorded run from any step with a different
+                model or prompt. Recorded tool results and model responses are served up to that step, so you can test a fix without
+                repeating side effects.
+              </p>
+            </div>
+            <DiffShowcase />
           </div>
         </section>
       </main>
@@ -105,9 +128,54 @@ function Feature({ title, children }: { title: string; children: React.ReactNode
   );
 }
 
+/** A generated pair of runs diffed with the real compare components, rendered at build time. */
+function DiffShowcase() {
+  const { baseline, candidate } = generateDiffPairs(Date.UTC(2026, 9, 20, 9), PRICES)[0]!;
+  const { diff } = compareRuns(
+    { traceId: baseline.traceId, spans: baseline.spans },
+    { traceId: candidate.traceId, spans: candidate.spans },
+  );
+  const { summary, firstDivergence } = diff;
+  const divergent = firstDivergence ? diff.rows[firstDivergence.rowIndex] : undefined;
+  const stats = [
+    { label: "Status", value: summary.statusChanged ? "Error to OK" : "Unchanged" },
+    { label: "Cost", value: summary.delta.costUsd === null ? "–" : formatSigned(summary.delta.costUsd, formatCost) },
+    { label: "Tokens", value: formatSigned(summary.delta.totalTokens, formatTokens) },
+    { label: "Rows changed", value: String(summary.rows.modified + summary.rows.added + summary.rows.removed) },
+  ];
+
+  return (
+    <figure className="overflow-hidden rounded-xl border border-border-strong bg-surface shadow-[0_24px_80px_-24px_rgb(0_0_0/0.55)]">
+      <dl className="grid grid-cols-2 gap-px border-b border-border bg-border sm:grid-cols-4">
+        {stats.map((s) => (
+          <div key={s.label} className="bg-surface px-4 py-2.5">
+            <dt className="text-[11.5px] text-fg-subtle">{s.label}</dt>
+            <dd className="tabular text-[14px] font-semibold text-fg">{s.value}</dd>
+          </div>
+        ))}
+      </dl>
+      {firstDivergence && divergent && (
+        <div className="flex items-center gap-2 border-b border-border bg-accent-soft px-4 py-2.5 text-[13px] text-fg-muted">
+          <span className="rounded bg-accent px-1.5 py-px text-[11px] font-semibold text-accent-fg">First divergence</span>
+          <span>
+            row {firstDivergence.rowIndex + 1}, <span className="font-mono text-[12.5px] text-fg">{divergent.right?.name}</span>, where
+            the model changed
+          </span>
+        </div>
+      )}
+      <DiffTree
+        rows={diff.rows}
+        visible={visibleRowIndexes(diff.rows, false)}
+        firstDivergence={firstDivergence}
+        labels={{ a: "A  claude-haiku-5-5 answers", b: "B  claude-sonnet-5-5 answers" }}
+      />
+    </figure>
+  );
+}
+
 /** A generated run rendered with the real waterfall component. Static: no database needed for the landing page. */
 function HeroRun() {
-  const run = generateHeroRun();
+  const run = generateHeroRun(PRICES);
   const spans = run.spans;
   const root = spans.find((s) => s.parentSpanId === null);
   const win = traceWindow(spans);

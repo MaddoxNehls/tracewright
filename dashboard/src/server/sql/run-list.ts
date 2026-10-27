@@ -77,10 +77,17 @@ export interface RunListQueryInput {
   limit: number;
 }
 
+/**
+ * Builds the page query. Going backward (`params.before`) walks the same
+ * ordering in reverse from the cursor; the caller reverses the rows back
+ * (see `isBackward`), so both directions share one keyset predicate.
+ */
 export function buildRunListQuery({ projectId, params, limit }: RunListQueryInput): BuiltQuery {
   const p = new Params();
   const sort = SORT_SPECS[params.sort];
-  const dir = params.dir === "asc" ? "ASC" : "DESC";
+  const backward = isBackward(params);
+  const ascending = (params.dir === "asc") !== backward;
+  const dir = ascending ? "ASC" : "DESC";
 
   const where = [`project_id = ${p.add(projectId)}`];
   if (params.status) where.push(`status = ${p.add(params.status)}`);
@@ -88,7 +95,8 @@ export function buildRunListQuery({ projectId, params, limit }: RunListQueryInpu
   if (params.tag) where.push(`${p.add(params.tag)} = ANY(tags)`);
   if (params.q) where.push(`name ILIKE ${p.add(`%${escapeLike(params.q)}%`)}`);
 
-  const cursor = params.cursor ? decodeCursor(params.cursor) : null;
+  const rawCursor = params.cursor ?? params.before;
+  const cursor = rawCursor ? decodeCursor(rawCursor) : null;
   if (cursor) {
     // Row-value comparison matches ORDER BY (expr, trace_id) when both use the same direction.
     const op = dir === "DESC" ? "<" : ">";
@@ -105,4 +113,9 @@ export function buildRunListQuery({ projectId, params, limit }: RunListQueryInpu
   ].join("\n");
 
   return { text, values: p.values };
+}
+
+/** A "Previous page" request: the rows before `params.before`, fetched in reverse order. */
+export function isBackward(params: RunListParams): boolean {
+  return !params.cursor && Boolean(params.before && decodeCursor(params.before));
 }

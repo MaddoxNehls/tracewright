@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_RUN_LIST_PARAMS, parseRunListParams, runListQueryString, type RunListParams } from "@/lib/run-list-params";
 import { escapeLike } from "@/server/sql/builder";
-import { buildRunListQuery, decodeCursor, encodeCursor } from "@/server/sql/run-list";
+import { buildRunListQuery, decodeCursor, encodeCursor, isBackward } from "@/server/sql/run-list";
 
 const PROJECT = "11111111-1111-1111-1111-111111111111";
 const TRACE = "0123456789abcdef0123456789abcdef";
@@ -107,5 +107,37 @@ describe("run list URL params", () => {
     const onPage2 = params({ tag: "prod", cursor: "abc" });
     expect(runListQueryString(onPage2, { status: "error" })).toBe("?status=error&tag=prod");
     expect(runListQueryString(onPage2, { cursor: "def" })).toBe("?tag=prod&cursor=def");
+  });
+});
+
+describe("backward (Previous page) pagination", () => {
+  const cursor = encodeCursor({ value: "2026-10-27 14:00:00+00", traceId: TRACE });
+
+  it("walks the ordering in reverse from the cursor", () => {
+    const q = buildRunListQuery({ projectId: PROJECT, params: params({ before: cursor }), limit: 25 });
+    const text = normalize(q.text);
+    expect(isBackward(params({ before: cursor }))).toBe(true);
+    expect(text).toContain("(start_time, trace_id) > ($2::timestamptz, $3)");
+    expect(text).toContain("ORDER BY start_time ASC, trace_id ASC");
+    expect(q.values).toEqual([PROJECT, "2026-10-27 14:00:00+00", TRACE, 26]);
+  });
+
+  it("flips an ascending sort too", () => {
+    const text = normalize(buildRunListQuery({ projectId: PROJECT, params: params({ sort: "cost", dir: "asc", before: cursor }), limit: 25 }).text);
+    expect(text).toContain("< ($2::numeric, $3)");
+    expect(text).toContain("ORDER BY coalesce(total_cost_usd, 0) DESC, trace_id DESC");
+  });
+
+  it("ignores a malformed before cursor", () => {
+    expect(isBackward(params({ before: "garbage" }))).toBe(false);
+    expect(buildRunListQuery({ projectId: PROJECT, params: params({ before: "garbage" }), limit: 25 }).values).toEqual([PROJECT, 26]);
+  });
+
+  it("parses and serializes before, and the two cursors are exclusive", () => {
+    expect(parseRunListParams({ before: "abc" })).toMatchObject({ before: "abc", cursor: null });
+    expect(parseRunListParams({ before: "abc", cursor: "def" })).toMatchObject({ before: null, cursor: "def" });
+    const onPage = params({ status: "ok", cursor: "def" });
+    expect(runListQueryString(onPage, { before: "abc", cursor: null })).toBe("?status=ok&before=abc");
+    expect(runListQueryString(params({ before: "abc" }), { tag: "prod" })).toBe("?tag=prod");
   });
 });

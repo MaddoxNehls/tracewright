@@ -122,10 +122,35 @@ def _safe_shutdown(exporter: Exporter, timeout: float | None) -> None:
 
 
 def _export(span: Span) -> None:
+    if _captures:
+        with _state_lock:
+            captured = _captures.get(span.trace_id)
+            if captured is not None:
+                captured.append(span)
     try:
         _exporter.export(span)
     except Exception:
         logger.debug("tracewright: export failed", exc_info=True)
+
+
+# Finished spans of selected traces, kept locally whatever the exporter does. Keyed by
+# trace id rather than context so spans ended on worker threads are still caught.
+_captures: dict[str, list[Span]] = {}
+
+
+class TraceCapture:
+    """Collects every span of one trace as it ends; used by ``tracewright eval``."""
+
+    def __init__(self, trace_id: str) -> None:
+        self.trace_id = trace_id
+        with _state_lock:
+            self._spans = _captures.setdefault(trace_id, [])
+
+    def stop(self) -> list[Span]:
+        """Stop collecting and return the spans that ended so far."""
+        with _state_lock:
+            _captures.pop(self.trace_id, None)
+            return list(self._spans)
 
 
 class SpanContext:
@@ -138,18 +163,18 @@ class SpanContext:
         *,
         input: Any = None,
         attributes: Mapping[str, Any] | None = None,
-        new_trace: bool = False,
+        tags: list[str] | None = None,
     ) -> None:
         self._name = name
         self._kind: SpanKind = kind
         self._input = input
         self._attributes = attributes
-        self._new_trace = new_trace
+        self._tags = tags
         self._span: Span | None = None
         self._token: contextvars.Token[Span | None] | None = None
 
     def __enter__(self) -> Span:
-        parent = None if self._new_trace else _current_span.get()
+        parent = _current_span.get()
         span = Span(
             self._name,
             self._kind,
@@ -162,6 +187,8 @@ class SpanContext:
             span.set_input(self._input)
         if self._attributes:
             span.set_attributes(self._attributes)
+        if self._tags is not None:
+            _add_tags(_root_of(span), self._tags)
         if parent is None and (replay := active_replay.get()) is not None:
             replay.tag_root(span)
         self._span = span
@@ -203,12 +230,26 @@ def run(
 ) -> SpanContext:
     """Start a new run: a root ``agent`` span with a fresh trace id.
 
-    Usable as ``with tracewright.run(...) as run:`` or ``async with``.
+    Usable as ``with tracewright.run(...) as run:`` or ``async with``. Called inside an
+    open span (a sub-agent under an orchestrator, or an agent under ``tracewright eval``)
+    the run joins that trace as a child ``agent`` span instead, and its tags are added to
+    the trace's root span, where the dashboard reads them.
     """
-    attrs = dict(attributes or {})
-    if tags is not None:
-        attrs["tracewright.tags"] = [str(tag) for tag in tags]
-    return SpanContext(name, "agent", input=input, attributes=attrs, new_trace=True)
+    tag_list = [str(tag) for tag in tags] if tags is not None else None
+    return SpanContext(name, "agent", input=input, attributes=attributes, tags=tag_list)
+
+
+def _root_of(span: Span) -> Span:
+    while span.parent is not None:
+        span = span.parent
+    return span
+
+
+def _add_tags(root: Span, tags: list[str]) -> None:
+    existing = root.attributes.get("tracewright.tags")
+    merged = list(existing) if isinstance(existing, list) else []
+    merged += [tag for tag in tags if tag not in merged]
+    root.set_attribute("tracewright.tags", merged)
 
 
 def span(

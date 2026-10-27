@@ -1,9 +1,10 @@
 /**
  * Deterministic generator for realistic research-agent traces, shaped exactly
  * like what the Python SDK emits (OpenTelemetry GenAI attribute names,
- * Anthropic-style message payloads). Used by `pnpm seed` and by the landing
- * page hero, which renders a generated run without touching the database.
+ * Anthropic-style message payloads, replay attributes). Used by `pnpm seed`
+ * and by the landing page, which renders generated runs without a database.
  */
+import { priceCall, type PriceTable } from "@/lib/pricing";
 import type { JsonValue, RunStatus, Span, SpanError, SpanKind } from "@/lib/types";
 import { TOPICS, type Topic } from "./topics";
 
@@ -22,7 +23,6 @@ export function createRng(seed: number) {
   return {
     next,
     int: (min: number, max: number) => Math.floor(next() * (max - min + 1)) + min,
-    pick: <T>(items: readonly T[]): T => items[Math.floor(next() * items.length)] as T,
     hex: (length: number) => Array.from({ length }, () => Math.floor(next() * 16).toString(16)).join(""),
   };
 }
@@ -34,16 +34,15 @@ interface ModelSpec {
   id: string;
   responseModel: string;
   provider: "anthropic" | "openrouter";
-  inputPerMtok: number;
-  outputPerMtok: number;
   msPerOutputToken: number;
 }
 
-const MODELS = {
-  sonnet: { id: "claude-sonnet-4-5", responseModel: "claude-sonnet-4-5-20250929", provider: "anthropic", inputPerMtok: 3, outputPerMtok: 15, msPerOutputToken: 13 },
-  haiku: { id: "claude-haiku-4-5", responseModel: "claude-haiku-4-5-20251001", provider: "anthropic", inputPerMtok: 1, outputPerMtok: 5, msPerOutputToken: 6 },
-  opus: { id: "claude-opus-4-1", responseModel: "claude-opus-4-1-20250805", provider: "anthropic", inputPerMtok: 15, outputPerMtok: 75, msPerOutputToken: 26 },
-  gptMini: { id: "openai/gpt-4.1-mini", responseModel: "openai/gpt-4.1-mini-2025-04-14", provider: "openrouter", inputPerMtok: 0.4, outputPerMtok: 1.6, msPerOutputToken: 9 },
+export const MODELS = {
+  sonnet: { id: "claude-sonnet-5-5", responseModel: "claude-sonnet-5-5", provider: "anthropic", msPerOutputToken: 11 },
+  haiku: { id: "claude-haiku-5-5", responseModel: "claude-haiku-5-5", provider: "anthropic", msPerOutputToken: 5 },
+  opus: { id: "claude-opus-5-5", responseModel: "claude-opus-5-5", provider: "anthropic", msPerOutputToken: 19 },
+  // Not in ingest's price table, so its cost is unknown (null), exactly as ingest would store it.
+  gptMini: { id: "openai/gpt-5-mini", responseModel: "openai/gpt-5-mini-2026-08-07", provider: "openrouter", msPerOutputToken: 8 },
 } as const satisfies Record<string, ModelSpec>;
 
 interface AgentConfig {
@@ -58,9 +57,6 @@ const CONFIGS: AgentConfig[] = [
   { planner: MODELS.gptMini, summarizer: MODELS.gptMini, synthesizer: MODELS.gptMini },
   { planner: MODELS.haiku, summarizer: MODELS.haiku, synthesizer: MODELS.sonnet },
 ];
-
-const cost = (m: ModelSpec, input: number, output: number) =>
-  Math.round(((input * m.inputPerMtok + output * m.outputPerMtok) / 1_000_000) * 1e6) / 1e6;
 
 // ---------------------------------------------------------------- failure plan
 
@@ -90,6 +86,7 @@ class TraceBuilder {
   constructor(
     readonly rng: Rng,
     readonly traceId: string,
+    readonly prices: PriceTable,
   ) {}
 
   add(s: {
@@ -132,12 +129,12 @@ class TraceBuilder {
   }
 
   /** Patches a span after its children are known (end time, status, output). */
-  patch(spanId: string, patch: Partial<Pick<Span, "endTime" | "status" | "error" | "output">> & { end?: number }) {
+  patch(spanId: string, patch: Partial<Pick<Span, "status" | "error" | "output">> & { end?: number }) {
     const span = this.spans.find((s) => s.spanId === spanId);
     if (!span) return;
     if (patch.end !== undefined) {
       span.endTime = new Date(patch.end).toISOString();
-      span.durationMs = patch.end - new Date(span.startTime).getTime();
+      span.durationMs = patch.end - Date.parse(span.startTime);
     }
     if (patch.status) span.status = patch.status;
     if (patch.error !== undefined) span.error = patch.error;
@@ -165,10 +162,11 @@ function llmSpan(b: TraceBuilder, call: LlmCall): number {
   const rng = b.rng;
   const ttft = rng.int(280, 900);
   const failed = Boolean(call.error);
+  const inputTokens = failed ? 0 : call.inputTokens;
   const outputTokens = failed ? 0 : call.outputTokens;
   const latency = failed ? rng.int(120, 900) : ttft + outputTokens * call.model.msPerOutputToken + rng.int(0, 400);
   const end = call.start + latency;
-  const usd = failed ? 0 : cost(call.model, call.inputTokens, outputTokens);
+  const usd = priceCall(b.prices, call.model.id, inputTokens, outputTokens);
 
   const attributes: Record<string, JsonValue> = {
     "gen_ai.provider.name": call.model.provider,
@@ -176,10 +174,10 @@ function llmSpan(b: TraceBuilder, call: LlmCall): number {
     "gen_ai.request.model": call.model.id,
     "gen_ai.request.max_tokens": 4096,
     "gen_ai.request.temperature": 0.2,
-    "gen_ai.usage.input_tokens": failed ? 0 : call.inputTokens,
+    "gen_ai.usage.input_tokens": inputTokens,
     "gen_ai.usage.output_tokens": outputTokens,
-    "tracewright.cost_usd": usd,
   };
+  if (usd !== null) attributes["tracewright.cost_usd"] = usd;
   if (!failed) {
     attributes["gen_ai.response.model"] = call.model.responseModel;
     attributes["gen_ai.response.finish_reasons"] = [call.stopReason];
@@ -208,10 +206,10 @@ function llmSpan(b: TraceBuilder, call: LlmCall): number {
           role: "assistant",
           content: call.responseContent,
           stop_reason: call.stopReason,
-          usage: { input_tokens: call.inputTokens, output_tokens: outputTokens },
+          usage: { input_tokens: inputTokens, output_tokens: outputTokens },
         },
     model: call.model.id,
-    inputTokens: failed ? 0 : call.inputTokens,
+    inputTokens,
     outputTokens,
     costUsd: usd,
   });
@@ -241,22 +239,30 @@ function toolSpan(
 const SYSTEM_PROMPTS = {
   v1: "You are a research assistant. Search the web, read sources, and answer the user's question.",
   v2: "You are a careful research assistant. Plan 2-3 targeted searches, read the most authoritative sources, compute any numbers explicitly with the calculator tool, and answer in under 120 words with citations. If evidence is mixed, say so.",
+  v3: "You are a thorough research assistant. Never answer from a single source: after each search, look for a primary source that confirms it, and keep searching until every claim has two independent citations.",
 };
+export type PromptVersion = keyof typeof SYSTEM_PROMPTS;
 
 export interface RunOptions {
-  index: number;
   topic: Topic;
-  promptVersion: "v1" | "v2";
+  promptVersion: PromptVersion;
   config: AgentConfig;
   startMs: number;
   incident: Incident;
   tags: string[];
   seed: number;
+  prices: PriceTable;
+  /** Follow-up queries the agent runs after its planned ones (an agent that keeps looping). */
+  followUpQueries?: string[];
+  /** Input tokens of the final synthesis call; defaults to a few thousand. */
+  synthInputTokens?: number;
+  /** Attempts the agent makes before giving up on an overloaded synthesis call. Default 2. */
+  synthAttempts?: number;
 }
 
 export function generateRun(opts: RunOptions): GeneratedRun {
   const rng = createRng(opts.seed);
-  const b = new TraceBuilder(rng, rng.hex(32));
+  const b = new TraceBuilder(rng, rng.hex(32), opts.prices);
   const { topic, config } = opts;
   const system = SYSTEM_PROMPTS[opts.promptVersion];
   const t0 = opts.startMs;
@@ -283,11 +289,12 @@ export function generateRun(opts: RunOptions): GeneratedRun {
   const plan = b.add({ parent: root, name: "plan", kind: "custom", start: t, end: t });
   const planToolUses: JsonValue[] = topic.queries.map((q) => ({ type: "tool_use", id: `toolu_${rng.hex(20)}`, name: "web_search", input: { query: q } }));
   const userMsg: Message = { role: "user", content: topic.question };
+  const tools = ["web_search", "fetch_page", "calculator", "save_note"];
 
   if (opts.incident === "rate_limit_recovered") {
     t = llmSpan(b, {
       parent: plan, start: t, model: config.planner, system, messages: [userMsg], inputTokens: 0, outputTokens: 0,
-      responseContent: [], stopReason: "end_turn", tools: ["web_search", "fetch_page", "calculator", "save_note"],
+      responseContent: [], stopReason: "end_turn", tools,
       error: { type: "rate_limit_error", message: "429: Number of request tokens has exceeded your per-minute rate limit. Retry after 2s." },
     });
     t += 2000 + rng.int(0, 300); // SDK backoff
@@ -296,14 +303,15 @@ export function generateRun(opts: RunOptions): GeneratedRun {
     parent: plan, start: t, model: config.planner, system, messages: [userMsg],
     inputTokens: rng.int(620, 980), outputTokens: rng.int(140, 320),
     responseContent: [{ type: "text", text: `I'll search for ${topic.queries.length} angles on this, then read the strongest sources.` }, ...planToolUses],
-    stopReason: "tool_use", tools: ["web_search", "fetch_page", "calculator", "save_note"],
+    stopReason: "tool_use", tools,
   });
   b.patch(plan, { end: t + rng.int(1, 6), output: { queries: topic.queries } });
   t += rng.int(5, 25);
 
-  // 2. one search step per query
+  // 2. one search step per query, then any follow-up loops
   const summaries: string[] = [];
-  for (const [qi, q] of topic.queries.entries()) {
+  const queries = [...topic.queries, ...(opts.followUpQueries ?? [])];
+  for (const [qi, q] of queries.entries()) {
     const step = b.add({ parent: root, name: `search: ${q}`, kind: "custom", start: t, end: t, input: { query: q } });
     t += rng.int(2, 10);
 
@@ -397,12 +405,13 @@ export function generateRun(opts: RunOptions): GeneratedRun {
     ];
     const sources = topic.sources.map((s, i) => `[${i + 1}] ${s.url}`).join("\n");
     const finalText = `${topic.answer}\n\nSources:\n${sources}`;
+    const synthInput = opts.synthInputTokens ?? rng.int(3200, 7600);
 
     if (opts.incident === "context_overflow_fatal") {
-      fatal = { type: "invalid_request_error", message: "prompt is too long: 212417 tokens > 200000 maximum" };
+      fatal = { type: "invalid_request_error", message: `prompt is too long: 212417 tokens > 200000 maximum for ${config.synthesizer.id}` };
       t = llmSpan(b, { parent: step, start: t, model: config.synthesizer, system, messages, inputTokens: 0, outputTokens: 0, responseContent: [], stopReason: "end_turn", error: fatal });
     } else {
-      const overloadAttempts = opts.incident === "synth_overloaded_fatal" ? 2 : 0;
+      const overloadAttempts = opts.incident === "synth_overloaded_fatal" ? (opts.synthAttempts ?? 2) : 0;
       for (let a = 0; a < overloadAttempts; a++) {
         t = llmSpan(b, {
           parent: step, start: t, model: config.synthesizer, system, messages, inputTokens: 0, outputTokens: 0, responseContent: [], stopReason: "end_turn",
@@ -411,11 +420,11 @@ export function generateRun(opts: RunOptions): GeneratedRun {
         t += 1000 * 2 ** a + rng.int(0, 250);
       }
       if (overloadAttempts > 0) {
-        fatal = { type: "overloaded_error", message: `synthesize failed after ${overloadAttempts} attempts: 529 Overloaded` };
+        fatal = { type: "overloaded_error", message: `synthesize gave up after ${overloadAttempts} ${overloadAttempts === 1 ? "attempt" : "attempts"}: 529 Overloaded` };
       } else {
         t = llmSpan(b, {
           parent: step, start: t, model: config.synthesizer, system, messages,
-          inputTokens: rng.int(3200, 7600), outputTokens: rng.int(380, 900),
+          inputTokens: synthInput, outputTokens: rng.int(380, 900),
           responseContent: [{ type: "text", text: finalText }], stopReason: "end_turn",
         });
         answer = topic.answer;
@@ -446,6 +455,95 @@ export function generateRun(opts: RunOptions): GeneratedRun {
   return { traceId: b.traceId, status: fatal ? "error" : "ok", spans: b.spans };
 }
 
+// ---------------------------------------------------------------- run transforms
+
+/** Gives a run fresh trace and span ids (two runs generated from one seed share ids). */
+export function withFreshIds(run: GeneratedRun, seed: number): GeneratedRun {
+  const rng = createRng(seed);
+  const traceId = rng.hex(32);
+  const ids = new Map(run.spans.map((s) => [s.spanId, rng.hex(16)]));
+  return {
+    traceId,
+    status: run.status,
+    spans: run.spans.map((s) => ({
+      ...s,
+      traceId,
+      spanId: ids.get(s.spanId)!,
+      parentSpanId: s.parentSpanId ? (ids.get(s.parentSpanId) ?? null) : null,
+    })),
+  };
+}
+
+/** Steps are the root's `custom` children, numbered from 1 in start order (as the SDK's replay counts them). */
+function stepsOf(run: GeneratedRun): GeneratedSpan[] {
+  const root = run.spans.find((s) => s.parentSpanId === null);
+  return run.spans
+    .filter((s) => s.parentSpanId === root?.spanId && s.kind === "custom")
+    .sort((a, b) => a.startTime.localeCompare(b.startTime));
+}
+
+/**
+ * Turns `live` (a run generated with the same seed as `original`, so its early
+ * steps match the recording) into what `tracewright.replay(original, from_step)`
+ * records: steps before `fromStep` are served from the recording (marked
+ * replayed, near-instant, no LLM spend), and the rest ran live.
+ */
+export function asReplay(original: GeneratedRun, live: GeneratedRun, fromStep: number, overrides: Record<string, JsonValue>): GeneratedRun {
+  const run = structuredClone(live);
+  const root = run.spans.find((s) => s.parentSpanId === null)!;
+  root.attributes = {
+    ...root.attributes,
+    "tracewright.replay_of": original.traceId,
+    "tracewright.replay_from_step": fromStep,
+    "tracewright.replay_tools": "recorded",
+    "tracewright.replay_overrides": overrides,
+  };
+
+  const steps = stepsOf(run);
+  const served = steps.slice(0, fromStep - 1);
+  const firstLive = steps[fromStep - 1];
+  if (!firstLive) return run;
+
+  // Re-time the served steps: each recorded call returns in a millisecond or two.
+  let cursor = Date.parse(root.startTime) + 4;
+  const set = (s: GeneratedSpan, start: number, end: number) => {
+    s.startTime = new Date(start).toISOString();
+    s.endTime = new Date(end).toISOString();
+    s.durationMs = end - start;
+  };
+  for (const step of served) {
+    const stepStart = cursor;
+    cursor += 1;
+    const calls = run.spans.filter((s) => s.parentSpanId === step.spanId).sort((a, b) => a.startTime.localeCompare(b.startTime));
+    for (const [i, call] of calls.entries()) {
+      const d = 1 + (i % 3);
+      set(call, cursor, cursor + d);
+      cursor += d + 1;
+      // Same seed, same span order: the recorded call sits at the same position in the original.
+      const source = original.spans[run.spans.indexOf(call)]?.spanId ?? null;
+      call.attributes = { ...call.attributes, "tracewright.replayed": true, "tracewright.replay_source_span_id": source };
+      if (call.kind === "llm") {
+        call.attributes["tracewright.cost_usd"] = 0; // nothing was spent this time
+        call.costUsd = 0;
+      }
+    }
+    set(step, stepStart, cursor);
+    step.attributes = { ...step.attributes, "tracewright.replayed": true };
+    cursor += 2;
+  }
+
+  // Everything from the first live step on keeps its shape, shifted earlier.
+  const servedIds = new Set(served.flatMap((s) => [s.spanId, ...run.spans.filter((c) => c.parentSpanId === s.spanId).map((c) => c.spanId)]));
+  const shift = Date.parse(firstLive.startTime) - cursor;
+  for (const s of run.spans) {
+    if (s === root || servedIds.has(s.spanId)) continue;
+    set(s, Date.parse(s.startTime) - shift, Date.parse(s.endTime) - shift);
+  }
+  const end = Math.max(...run.spans.filter((s) => s !== root).map((s) => Date.parse(s.endTime))) + 2;
+  set(root, Date.parse(root.startTime), end);
+  return run;
+}
+
 // ---------------------------------------------------------------- demo dataset
 
 const INCIDENTS: Partial<Record<number, Incident>> = {
@@ -462,10 +560,10 @@ const INCIDENTS: Partial<Record<number, Incident>> = {
 };
 
 /**
- * The demo project's 32 runs: every topic under prompt v1 and v2, spread over
+ * The demo project's baseline: every topic under prompt v1 and v2, spread over
  * the 14 days before `anchorMs`, newest last.
  */
-export function generateDemoRuns(anchorMs: number, seed = 20261027): GeneratedRun[] {
+export function generateDemoRuns(anchorMs: number, prices: PriceTable, seed = 20261027): GeneratedRun[] {
   const rng = createRng(seed);
   const runs: GeneratedRun[] = [];
   const total = TOPICS.length * 2;
@@ -479,23 +577,90 @@ export function generateDemoRuns(anchorMs: number, seed = 20261027): GeneratedRu
     const tags = [env, `prompt-${promptVersion}`, ...(index % 3 === 0 ? ["nightly"] : [])];
     const offset = spanMs * (1 - (index + rng.next() * 0.8) / total);
     const startMs = Math.round(anchorMs - offset);
-    runs.push(
-      generateRun({ index, topic, promptVersion, config, startMs, incident: INCIDENTS[index] ?? "none", tags, seed: seed + index * 7919 }),
-    );
+    runs.push(generateRun({ topic, promptVersion, config, startMs, incident: INCIDENTS[index] ?? "none", tags, seed: seed + index * 7919, prices }));
   }
   return runs;
 }
 
+const topicByTitle = (title: string): Topic => {
+  const topic = TOPICS.find((t) => t.title === title);
+  if (!topic) throw new Error(`unknown topic: ${title}`);
+  return topic;
+};
+
+export interface DiffPair {
+  label: string;
+  baseline: GeneratedRun;
+  candidate: GeneratedRun;
+}
+
+/**
+ * Three before/after pairs that make instructive diffs. In each pair both runs
+ * come from the same seed, so they are identical up to the change being shown.
+ */
+export function generateDiffPairs(anchorMs: number, prices: PriceTable): DiffPair[] {
+  const hour = 3600_000;
+
+  // 1. Model swap fixes an error: Haiku's context window overflows at synthesis; Sonnet's doesn't.
+  const swapTopic = topicByTitle("llm eval contamination");
+  const swapBase = { topic: swapTopic, promptVersion: "v2" as const, startMs: anchorMs - 30 * hour, seed: 5101, prices, tags: ["eval", "prompt-v2"] };
+  const swapA = generateRun({ ...swapBase, config: { planner: MODELS.sonnet, summarizer: MODELS.haiku, synthesizer: MODELS.haiku }, incident: "context_overflow_fatal" });
+  const swapB = withFreshIds(
+    generateRun({
+      ...swapBase,
+      startMs: anchorMs - 29 * hour,
+      config: { planner: MODELS.sonnet, summarizer: MODELS.haiku, synthesizer: MODELS.sonnet },
+      incident: "none",
+      synthInputTokens: 212_417,
+      tags: ["eval", "prompt-v2", "model-swap"],
+    }),
+    5102,
+  );
+
+  // 2. A prompt change that makes the agent keep looping: three extra searches, about 3x the cost.
+  const loopTopic = topicByTitle("vector index recall tradeoffs");
+  const loopBase = { topic: loopTopic, config: CONFIGS[0]!, incident: "none" as const, seed: 5201, prices };
+  const loopA = generateRun({ ...loopBase, promptVersion: "v2", startMs: anchorMs - 20 * hour, tags: ["eval", "prompt-v2"] });
+  const loopB = withFreshIds(
+    generateRun({
+      ...loopBase,
+      promptVersion: "v2",
+      startMs: anchorMs - 19 * hour,
+      tags: ["eval", "prompt-v3"],
+      followUpQueries: ["hnsw recall benchmark primary source", "pgvector ef_search latency measurements 2026", "hnsw parameter tuning independent replication"],
+      synthInputTokens: 24_000,
+    }),
+    5202,
+  );
+
+  // 3. Replay: synthesis was overloaded; replay from that step with a different model.
+  const replayTopic = topicByTitle("kafka vs nats for event fanout");
+  const replayBase = { topic: replayTopic, promptVersion: "v2" as const, seed: 5301, prices, tags: ["prod", "prompt-v2"] };
+  const original = generateRun({ ...replayBase, config: CONFIGS[0]!, startMs: anchorMs - 8 * hour, incident: "synth_overloaded_fatal", synthAttempts: 1 });
+  const live = withFreshIds(
+    generateRun({ ...replayBase, config: { ...CONFIGS[0]!, synthesizer: MODELS.opus }, startMs: anchorMs - 7 * hour, incident: "none", tags: ["prod", "prompt-v2", "replay"] }),
+    5302,
+  );
+  const fromStep = stepsOf(original).findIndex((s) => s.name === "synthesize") + 1;
+  const replay = asReplay(original, live, fromStep, { model: MODELS.opus.id });
+
+  return [
+    { label: "Model swap fixes a context overflow", baseline: swapA, candidate: swapB },
+    { label: "Extra search loop", baseline: loopA, candidate: loopB },
+    { label: "Replay from synthesis on another model", baseline: original, candidate: replay },
+  ];
+}
+
 /** A single representative run (with a recovered tool timeout) for the landing page hero. */
-export function generateHeroRun(): GeneratedRun {
+export function generateHeroRun(prices: PriceTable): GeneratedRun {
   return generateRun({
-    index: 0,
-    topic: TOPICS[7]!,
+    topic: topicByTitle("solar payback in seattle"),
     promptVersion: "v2",
     config: CONFIGS[1]!,
     startMs: Date.UTC(2026, 9, 20, 14, 2, 11),
     incident: "search_timeout_recovered",
     tags: ["eval", "prompt-v2"],
     seed: 4242,
+    prices,
   });
 }

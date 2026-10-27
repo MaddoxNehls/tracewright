@@ -4,21 +4,66 @@ import type { RunDetail, RunSummary } from "@/lib/types";
 import { query } from "./db";
 import { toRunSummary, toSpan, type RunRow, type SpanRow } from "./rows";
 import { Params } from "./sql/builder";
-import { buildRunListQuery, encodeCursor, RUN_COLUMNS } from "./sql/run-list";
+import { buildRunListQuery, decodeCursor, encodeCursor, isBackward, RUN_COLUMNS } from "./sql/run-list";
 
 export const RUN_PAGE_SIZE = 25;
 
 export interface RunPage {
   runs: RunSummary[];
+  /** `cursor` for the next page, or null on the last page. */
   nextCursor: string | null;
+  /** `before` for the previous page, or null on the first page. */
+  prevCursor: string | null;
 }
 
+type SortedRunRow = RunRow & { sort_value: string };
+const cursorOf = (r: SortedRunRow | undefined) => (r ? encodeCursor({ value: r.sort_value, traceId: r.trace_id }) : null);
+
 export async function listRuns(projectId: string, params: RunListParams, limit = RUN_PAGE_SIZE): Promise<RunPage> {
-  const rows = await query<RunRow & { sort_value: string }>(buildRunListQuery({ projectId, params, limit }));
+  const rows = await query<SortedRunRow>(buildRunListQuery({ projectId, params, limit }));
+  // The query fetches one extra row in its own direction: it says whether more rows lie that way.
+  const more = rows.length > limit;
+  if (isBackward(params)) {
+    const page = rows.slice(0, limit).reverse();
+    return { runs: page.map(toRunSummary), nextCursor: cursorOf(page.at(-1)), prevCursor: more ? cursorOf(page[0]) : null };
+  }
   const page = rows.slice(0, limit);
-  const last = page.at(-1);
-  const nextCursor = rows.length > limit && last ? encodeCursor({ value: last.sort_value, traceId: last.trace_id }) : null;
-  return { runs: page.map(toRunSummary), nextCursor };
+  return {
+    runs: page.map(toRunSummary),
+    nextCursor: more ? cursorOf(page.at(-1)) : null,
+    prevCursor: params.cursor && decodeCursor(params.cursor) ? cursorOf(page[0]) : null,
+  };
+}
+
+export interface RunSibling {
+  traceId: string;
+  status: RunSummary["status"];
+  startTime: string;
+  durationMs: number;
+  costUsd: number | null;
+  tags: string[];
+  models: string[];
+}
+
+/** Recent runs with the same name: the natural candidates to compare a run against. */
+export async function listSiblingRuns(projectId: string, name: string, excludeTraceId: string, limit = 12): Promise<RunSibling[]> {
+  const p = new Params();
+  const rows = await query<RunRow>({
+    text: `SELECT ${RUN_COLUMNS} FROM runs
+WHERE project_id = ${p.add(projectId)} AND name = ${p.add(name)} AND trace_id <> ${p.add(excludeTraceId)}
+ORDER BY start_time DESC, trace_id DESC
+LIMIT ${p.add(limit)}`,
+    values: p.values,
+  });
+  return rows.map(toRunSummary).map(({ traceId, status, startTime, durationMs, costUsd, tags, models }) => ({
+    traceId,
+    status,
+    startTime,
+    durationMs,
+    costUsd,
+    tags,
+    models,
+  }));
 }
 
 export interface RunFacets {

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from collections.abc import Mapping, Sequence
 from datetime import datetime
@@ -14,6 +15,7 @@ from tracewright.testing import InMemoryExporter
 
 from research_agent.agent import AgentResult, ResearchAgent
 from research_agent.backends import BACKENDS, DEFAULT_SCENARIO, SCENARIOS, create_backend
+from research_agent.backends.mock import DOUBLE_CHECK_ENV
 from research_agent.tools import Toolbox
 
 
@@ -39,6 +41,13 @@ def build_parser() -> argparse.ArgumentParser:
         type=float,
         default=0.3,
         help="simulated seconds per mock LLM call, so traces have realistic timing",
+    )
+    parser.add_argument(
+        "--mock-double-check",
+        action="store_true",
+        default=os.environ.get(DOUBLE_CHECK_ENV) == "1",
+        help="make the mock model repeat its first tool call (a deliberate regression; "
+        f"also enabled by {DOUBLE_CHECK_ENV}=1)",
     )
     parser.add_argument(
         "--print-spans",
@@ -140,7 +149,11 @@ def build_agent(
     args: argparse.Namespace, scenario: str, extra_tags: Sequence[str] = ()
 ) -> ResearchAgent:
     backend = create_backend(
-        args.backend, model=args.model, scenario=scenario, mock_latency=args.mock_latency
+        args.backend,
+        model=args.model,
+        scenario=scenario,
+        mock_latency=args.mock_latency,
+        mock_double_check=args.mock_double_check,
     )
     tags = [f"scenario:{scenario}"] if args.backend == "mock" else []
     return ResearchAgent(

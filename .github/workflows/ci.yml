@@ -1,0 +1,152 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  # Each component only runs when its files (or this workflow) changed.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      go: ${{ steps.filter.outputs.go }}
+      python: ${{ steps.filter.outputs.python }}
+      typescript: ${{ steps.filter.outputs.typescript }}
+      dashboard: ${{ steps.filter.outputs.dashboard }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            workflow: &workflow
+              - '.github/workflows/ci.yml'
+            go:
+              - *workflow
+              - 'ingest/**'
+            python:
+              - *workflow
+              - 'sdk/python/**'
+              - 'examples/research-agent/**'
+            typescript:
+              - *workflow
+              - 'sdk/typescript/**'
+              - 'packages/run-diff/**'
+            dashboard:
+              - *workflow
+              - 'dashboard/**'
+              - 'packages/run-diff/**'
+
+  go:
+    name: Go (ingest)
+    needs: changes
+    if: needs.changes.outputs.go == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ingest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: ingest/go.mod
+          cache-dependency-path: ingest/go.sum
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then echo "$unformatted"; exit 1; fi
+      - run: go vet ./...
+      # Integration tests start Postgres with testcontainers (Docker is on the runner).
+      - run: go test ./...
+
+  python:
+    name: Python (${{ matrix.project }})
+    needs: changes
+    if: needs.changes.outputs.python == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        project: [sdk/python, examples/research-agent]
+    defaults:
+      run:
+        working-directory: ${{ matrix.project }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: '3.13'
+          enable-cache: true
+          cache-dependency-glob: ${{ matrix.project }}/uv.lock
+      - run: uv sync --locked
+      - run: uv run ruff check .
+      - run: uv run mypy --strict src
+      # The replay end-to-end test skips itself without a running ingest stack.
+      - run: uv run pytest
+
+  typescript:
+    name: TypeScript (${{ matrix.project }})
+    needs: changes
+    if: needs.changes.outputs.typescript == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        project: [sdk/typescript, packages/run-diff]
+    defaults:
+      run:
+        working-directory: ${{ matrix.project }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.0.9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: ${{ matrix.project }}/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run typecheck
+      - run: pnpm run --if-present lint
+      - run: pnpm test
+      - run: pnpm run build
+
+  dashboard:
+    name: Dashboard
+    needs: changes
+    if: needs.changes.outputs.dashboard == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: dashboard
+    env:
+      NEXT_TELEMETRY_DISABLED: '1'
+      # Build-time placeholder; nothing here talks to a real database or GitHub.
+      AUTH_SECRET: ci-placeholder-not-a-secret
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.0.9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: |
+            dashboard/pnpm-lock.yaml
+            packages/run-diff/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      # typecheck, test and build each rebuild packages/run-diff first (pre-scripts).
+      - run: pnpm run typecheck
+      - run: pnpm run lint
+      - run: pnpm test
+      - run: pnpm run build

@@ -100,6 +100,28 @@ effect; `--replay-tools live` re-executes tools whose arguments match the record
 instead of reusing their results. See the [SDK README](../../sdk/python/README.md#replay)
 for the matching rules.
 
+## Evals
+
+[`evals/suite.yaml`](evals/suite.yaml) is a six-task regression suite on the mock backend
+(deterministic, no keys), with a committed [`baseline.json`](evals/baseline.json) and
+[`thresholds.yaml`](evals/thresholds.yaml). The `agent-eval` workflow runs it on every PR
+that touches the agent or the SDK and comments the report.
+
+```bash
+uv run tracewright eval run evals/suite.yaml -o results.json
+uv run tracewright eval compare --baseline evals/baseline.json --current results.json \
+    --thresholds evals/thresholds.yaml
+```
+
+To see it catch a regression, set `RESEARCH_AGENT_MOCK_DOUBLE_CHECK=1` (or pass
+`--mock-double-check` to the CLI): the mock model then repeats its first tool call, one
+wasted loop per task. Four tasks blow their step budget, the other two still pass but are
+flagged for the extra step, and cost and tokens rise by over 40%;
+[`docs/example-regression-report.md`](../../docs/example-regression-report.md) is the result.
+After an intended behaviour change, regenerate the baseline with
+`uv run tracewright eval run evals/suite.yaml -o evals/baseline.json`
+(`tests/test_evals.py` fails until you do).
+
 ## Trace shape
 
 ```

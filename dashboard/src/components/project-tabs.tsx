@@ -8,7 +8,7 @@ export function ProjectTabs({ slug }: { slug: string }) {
   const base = `/p/${slug}`;
   const tabs = [
     { href: base, label: "Overview", active: pathname === base },
-    { href: `${base}/runs`, label: "Runs", active: pathname.startsWith(`${base}/runs`) },
+    { href: `${base}/runs`, label: "Runs", active: pathname.startsWith(`${base}/runs`) || pathname.startsWith(`${base}/compare`) },
   ];
   return (
     <nav aria-label="Project" className="flex h-14 items-stretch gap-1">

@@ -8,6 +8,9 @@ importers:
 
   .:
     dependencies:
+      '@tracewright/run-diff':
+        specifier: link:../packages/run-diff
+        version: link:../packages/run-diff
       lucide-react:
         specifier: ^1.61.0
         version: 1.61.0(@types/react@19.3.0)(react@19.3.0)

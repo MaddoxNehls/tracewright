@@ -1,0 +1,19 @@
+# When does `tracewright eval compare` call the current results a regression?
+# A metric regresses when it moves past every limit given for it, so an absolute limit
+# next to a percentage works as a noise floor.
+
+# Any task that passed in the baseline and now fails (or flakes under --repeat).
+max_newly_failing_tasks: 0
+
+metrics:
+  passed_tasks: {max_decrease: 0}
+  cost_usd.total: {max_increase_pct: 10}
+  tokens.total: {max_increase_pct: 10}
+  steps.total: {max_increase: 0}
+  # Mock runs take milliseconds, and CI machines vary, so only flag big absolute jumps.
+  latency_ms.p95: {max_increase_pct: 50, max_increase: 500}
+
+# Per task (medians over repeats): a task over a limit is regressed even if it passes.
+tasks:
+  steps: {max_increase: 0}
+  cost_usd: {max_increase_pct: 10}
