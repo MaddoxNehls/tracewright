@@ -62,6 +62,37 @@ func (s *Store) CreateAPIKey(ctx context.Context, projectSlug string) (key strin
 	return key, nil
 }
 
+// RevokeAPIKey revokes the active key in the project whose display prefix
+// matches. Prefixes carry only 32 bits, so an ambiguous match is refused
+// rather than revoking more than the caller meant to.
+func (s *Store) RevokeAPIKey(ctx context.Context, projectSlug, prefix string) error {
+	return pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		rows, err := tx.Query(ctx,
+			`SELECT k.id FROM api_keys k JOIN projects p ON p.id = k.project_id
+			 WHERE p.slug = $1 AND k.prefix = $2 AND k.revoked_at IS NULL
+			 FOR UPDATE OF k`,
+			projectSlug, prefix)
+		if err != nil {
+			return fmt.Errorf("look up api key: %w", err)
+		}
+		ids, err := pgx.CollectRows(rows, pgx.RowTo[string])
+		if err != nil {
+			return fmt.Errorf("look up api key: %w", err)
+		}
+		switch len(ids) {
+		case 0:
+			return fmt.Errorf("active key %q in project %q: %w", prefix, projectSlug, ErrNotFound)
+		case 1:
+		default:
+			return fmt.Errorf("prefix %q matches %d active keys; refusing to revoke", prefix, len(ids))
+		}
+		if _, err := tx.Exec(ctx, `UPDATE api_keys SET revoked_at = now() WHERE id = $1`, ids[0]); err != nil {
+			return fmt.Errorf("revoke api key: %w", err)
+		}
+		return nil
+	})
+}
+
 // ProjectIDForKeyHash resolves a key hash to its project. ok is false when no
 // active (non-revoked) key matches.
 func (s *Store) ProjectIDForKeyHash(ctx context.Context, hash [32]byte) (projectID string, ok bool, err error) {

@@ -51,7 +51,8 @@ func main() {
 const usage = `usage:
   tracewright-ingest [serve]
   tracewright-ingest admin create-project --slug SLUG --name NAME [--public]
-  tracewright-ingest admin create-key --project SLUG`
+  tracewright-ingest admin create-key --project SLUG
+  tracewright-ingest admin revoke-key --project SLUG --prefix tw_XXXXXXXX`
 
 func serve(ctx context.Context, stopSignals context.CancelFunc) error {
 	log := slog.New(slog.NewJSONHandler(os.Stdout, nil))

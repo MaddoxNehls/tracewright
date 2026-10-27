@@ -302,8 +302,14 @@ func TestProjectsAndKeys(t *testing.T) {
 	if err != nil || !ok || id != p.ID {
 		t.Errorf("lookup = %q, %v, %v", id, ok, err)
 	}
-	if _, err := st.Pool().Exec(ctx, `UPDATE api_keys SET revoked_at = now() WHERE project_id = $1`, p.ID); err != nil {
+	if err := st.RevokeAPIKey(ctx, p.Slug, "tw_00000000"); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("unknown prefix: err = %v, want ErrNotFound", err)
+	}
+	if err := st.RevokeAPIKey(ctx, p.Slug, apikey.DisplayPrefix(key)); err != nil {
 		t.Fatal(err)
+	}
+	if err := st.RevokeAPIKey(ctx, p.Slug, apikey.DisplayPrefix(key)); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("already revoked: err = %v, want ErrNotFound", err)
 	}
 	if _, ok, err := st.ProjectIDForKeyHash(ctx, apikey.Hash(key)); ok || err != nil {
 		t.Errorf("revoked key: ok = %v, err = %v", ok, err)
