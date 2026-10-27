@@ -2,18 +2,25 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any, TypeVar
 
 from tracewright._span import Span
-from tracewright.instrumentation._common import RequestInfo, drop_none, patch_create
+from tracewright.instrumentation._common import (
+    RequestInfo,
+    drop_none,
+    patch_create,
+    rebuild_model,
+)
 
 ClientT = TypeVar("ClientT")
+
+_SYSTEM_ROLES = ("system", "developer")
 
 
 class _OpenAIAdapter:
     def __init__(self, provider: str) -> None:
-        self._provider = provider
+        self.provider = provider
 
     def describe_request(self, kwargs: Mapping[str, Any]) -> RequestInfo:
         model = kwargs.get("model")
@@ -21,7 +28,7 @@ class _OpenAIAdapter:
             name=f"chat {model}" if model else "chat",
             attributes=drop_none(
                 {
-                    "gen_ai.provider.name": self._provider,
+                    "gen_ai.provider.name": self.provider,
                     "gen_ai.operation.name": "chat",
                     "gen_ai.request.model": model,
                     "gen_ai.request.max_tokens": kwargs.get("max_tokens")
@@ -49,6 +56,48 @@ class _OpenAIAdapter:
         )
         messages = [getattr(c, "message", None) for c in choices]
         span.set_output(messages[0] if len(messages) == 1 else messages)
+
+    def override_system(self, kwargs: dict[str, Any], edit: Callable[[Any], Any]) -> None:
+        """Edit the first system (or developer) message, inserting one if there is none."""
+        messages = list(kwargs.get("messages") or [])
+        for i, message in enumerate(messages):
+            if isinstance(message, Mapping) and message.get("role") in _SYSTEM_ROLES:
+                messages[i] = {**message, "content": edit(message.get("content"))}
+                break
+        else:
+            messages.insert(0, {"role": "system", "content": edit(None)})
+        kwargs["messages"] = messages
+
+    def rebuild_response(self, output: Any, attributes: Mapping[str, Any]) -> Any:
+        messages = output if isinstance(output, list) else [output]
+        finish_reasons = list(attributes.get("gen_ai.response.finish_reasons") or [])
+        input_tokens = attributes.get("gen_ai.usage.input_tokens") or 0
+        output_tokens = attributes.get("gen_ai.usage.output_tokens") or 0
+        model = attributes.get("gen_ai.response.model") or attributes.get("gen_ai.request.model")
+        return rebuild_model(
+            "openai.types.chat",
+            "ChatCompletion",
+            {
+                "id": attributes.get("gen_ai.response.id") or "chatcmpl-replayed",
+                "object": "chat.completion",
+                "created": 0,
+                "model": model or "unknown",
+                "choices": [
+                    {
+                        "index": i,
+                        "message": message,
+                        "finish_reason": finish_reasons[i] if i < len(finish_reasons) else "stop",
+                        "logprobs": None,
+                    }
+                    for i, message in enumerate(messages)
+                ],
+                "usage": {
+                    "prompt_tokens": input_tokens,
+                    "completion_tokens": output_tokens,
+                    "total_tokens": input_tokens + output_tokens,
+                },
+            },
+        )
 
 
 def instrument_openai(client: ClientT, provider: str = "openai") -> ClientT:

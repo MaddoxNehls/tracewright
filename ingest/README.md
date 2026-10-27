@@ -46,6 +46,7 @@ only its SHA-256 hash and a short display prefix are stored.
 ## Endpoints
 
 - `POST /v1/spans`: returns `202 {"accepted": n}`, `400` with indexed field errors, `401`, `413`, `415` (unknown `Content-Encoding`), or `429` with `Retry-After` when the queue is full.
+- `GET /v1/runs/{trace_id}`: the run summary and all of its spans, ordered by start time, in the same span shape as `POST /v1/spans`. Same API keys; a key only sees its own project, and a run in another project is a `404`. Used by the SDKs' replay.
 - `GET /healthz`: liveness check, returns `ok`.
 - `GET /metrics`: Prometheus metrics, all prefixed `tracewright_`: `spans_received_total`, `spans_written_total`, `spans_rejected_total{reason}`, `write_failures_total`, `queue_depth`, `batch_write_duration_seconds`, `http_request_duration_seconds{route,method,code}`, plus Go runtime and process metrics.
 

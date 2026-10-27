@@ -32,6 +32,7 @@ const retryAfterSeconds = "1"
 type Handler struct {
 	Auth     *Authenticator
 	Queue    *pipeline.Queue
+	Runs     RunReader
 	Prices   *pricing.Table
 	Metrics  *metrics.Metrics
 	Gatherer prometheus.Gatherer
@@ -46,6 +47,7 @@ func (h *Handler) Routes() http.Handler {
 		mux.Handle(pattern, promhttp.InstrumentHandlerDuration(observer, next))
 	}
 	handle("POST /v1/spans", h.requireAuth(http.HandlerFunc(h.postSpans)))
+	handle("GET /v1/runs/{trace_id}", h.requireAuth(http.HandlerFunc(h.getRun)))
 	handle("GET /healthz", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		io.WriteString(w, "ok")
@@ -54,7 +56,8 @@ func (h *Handler) Routes() http.Handler {
 	return mux
 }
 
-// requireAuth rejects unauthenticated requests before their body is read.
+// requireAuth rejects unauthenticated requests before their body is read, and
+// scopes the rest of the request to the key's project.
 func (h *Handler) requireAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id, err := h.Auth.Authenticate(r.Context(), r.Header.Get("Authorization"))

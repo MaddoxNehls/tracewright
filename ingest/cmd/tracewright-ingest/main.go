@@ -96,6 +96,7 @@ func serve(ctx context.Context, stopSignals context.CancelFunc) error {
 	handler := &api.Handler{
 		Auth:     api.NewAuthenticator(st, api.AuthConfig{}),
 		Queue:    queue,
+		Runs:     st,
 		Prices:   prices,
 		Metrics:  m,
 		Gatherer: reg,

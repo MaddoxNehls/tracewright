@@ -1,25 +1,52 @@
-"""A scripted, deterministic backend that produces realistic traces without an API key."""
+"""A scripted, deterministic backend that produces realistic traces without an API key.
+
+The mock speaks the Anthropic Messages API: ``MockBackend`` is the real Anthropic backend
+pointed at :class:`ScriptedAnthropic`, a fake client whose "model" follows a scenario
+script. So mock runs go through the same Tracewright instrumentation, and the same
+replay path, as production runs.
+"""
 
 from __future__ import annotations
 
 import json
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-import tracewright
-
-from research_agent.tools import ToolSpec
+from research_agent.backends.anthropic_backend import AnthropicBackend
 from research_agent.transcript import (
     AssistantTurn,
     Message,
     ToolCall,
+    ToolResult,
     ToolResults,
+    UserMessage,
     to_chat_messages,
 )
 
-ScriptStep = Callable[[Sequence[Message]], AssistantTurn]
+CAREFUL_MODEL = "mock-2"
+
+
+@dataclass(frozen=True)
+class Prompt:
+    """What the scripted model sees on one call."""
+
+    system: str
+    model: str
+    transcript: Sequence[Message]
+
+    @property
+    def plain_numbers(self) -> bool:
+        """Whether calculator expressions come out without units.
+
+        The careful model always writes them that way; the default model only when the
+        system prompt asks for plain numbers.
+        """
+        return self.model == CAREFUL_MODEL or "plain numbers" in self.system.lower()
+
+
+ScriptStep = Callable[[Prompt], AssistantTurn]
 
 
 @dataclass(frozen=True)
@@ -35,8 +62,8 @@ def _turn_index(transcript: Sequence[Message]) -> int:
 
 
 def call(text: str, *tools: tuple[str, dict[str, Any]]) -> ScriptStep:
-    def step(transcript: Sequence[Message]) -> AssistantTurn:
-        n = _turn_index(transcript) + 1
+    def step(prompt: Prompt) -> AssistantTurn:
+        n = _turn_index(prompt.transcript) + 1
         calls = [ToolCall(f"call_{n}_{i}", name, args) for i, (name, args) in enumerate(tools)]
         return AssistantTurn(text, calls)
 
@@ -46,8 +73,17 @@ def call(text: str, *tools: tuple[str, dict[str, Any]]) -> ScriptStep:
 def answer(template: str) -> ScriptStep:
     """Final answer; ``{calc}`` is the last successful calculator result in the transcript."""
 
-    def step(transcript: Sequence[Message]) -> AssistantTurn:
-        return AssistantTurn(template.format(calc=_last_calculation(transcript)))
+    def step(prompt: Prompt) -> AssistantTurn:
+        return AssistantTurn(template.format(calc=_last_calculation(prompt.transcript)))
+
+    return step
+
+
+def retry_if_failed(retry: ScriptStep, otherwise: ScriptStep) -> ScriptStep:
+    """React to the previous tool results, as a model would."""
+
+    def step(prompt: Prompt) -> AssistantTurn:
+        return (retry if _last_results_failed(prompt.transcript) else otherwise)(prompt)
 
     return step
 
@@ -60,6 +96,25 @@ def _last_calculation(transcript: Sequence[Message]) -> Any:
                     return json.loads(result.content)
     return float("nan")
 
+
+def _last_results_failed(transcript: Sequence[Message]) -> bool:
+    last = transcript[-1] if transcript else None
+    return isinstance(last, ToolResults) and any(r.is_error for r in last.results)
+
+
+def _share_of_samples(prompt: Prompt) -> AssistantTurn:
+    expression = "21.5 / 382 * 100" if prompt.plain_numbers else "21.5 kg / 382 kg * 100"
+    return call(
+        "All six landings returned about 382 kg. Calculating the share.",
+        ("calculator", {"expression": expression}),
+    )(prompt)
+
+
+_SAMPLES_ANSWER = answer(
+    "Apollo 11 returned about {calc:.1f}% of all Apollo lunar samples: 21.5 kg "
+    "out of roughly 382 kg collected across the six landing missions. "
+    "Sources: apollo-11, apollo-program-summary."
+)
 
 SCENARIOS = {
     s.name: s
@@ -104,7 +159,8 @@ SCENARIOS = {
         ),
         Scenario(
             "calculator-recovery",
-            "The calculator rejects an expression with units; the agent retries and recovers.",
+            "The calculator rejects an expression with units; the agent retries and recovers. "
+            f"A system prompt asking for plain numbers (or --model {CAREFUL_MODEL}) avoids it.",
             "What share of all the lunar samples returned by Apollo came back on Apollo 11?",
             (
                 call(
@@ -115,19 +171,15 @@ SCENARIOS = {
                     "Apollo 11 returned 21.5 kg. Now the program total.",
                     ("search_corpus", {"query": "Apollo program total lunar samples returned"}),
                 ),
-                call(
-                    "All six landings returned about 382 kg. Calculating the share.",
-                    ("calculator", {"expression": "21.5 kg / 382 kg * 100"}),
+                _share_of_samples,
+                retry_if_failed(
+                    call(
+                        "The calculator does not accept units. Retrying with plain numbers.",
+                        ("calculator", {"expression": "21.5 / 382 * 100"}),
+                    ),
+                    otherwise=_SAMPLES_ANSWER,
                 ),
-                call(
-                    "The calculator does not accept units. Retrying with plain numbers.",
-                    ("calculator", {"expression": "21.5 / 382 * 100"}),
-                ),
-                answer(
-                    "Apollo 11 returned about {calc:.1f}% of all Apollo lunar samples: 21.5 kg "
-                    "out of roughly 382 kg collected across the six landing missions. "
-                    "Sources: apollo-11, apollo-program-summary."
-                ),
+                _SAMPLES_ANSWER,
             ),
         ),
         Scenario(
@@ -161,8 +213,106 @@ DEFAULT_SCENARIO = "apollo-gap"
 _GIVE_UP = answer("I could not find a confident answer in the corpus.")
 
 
-class MockBackend:
-    """Replays a scenario, recording each turn as an ``llm`` span like a real provider."""
+class ScriptedAnthropic:
+    """A fake ``anthropic.Anthropic`` whose model plays a scenario's script."""
+
+    def __init__(self, scenario: Scenario, *, latency: float = 0.0) -> None:
+        self.messages = _ScriptedMessages(scenario, latency)
+
+
+class _ScriptedMessages:
+    def __init__(self, scenario: Scenario, latency: float) -> None:
+        self._scenario = scenario
+        self._latency = latency
+
+    def create(
+        self,
+        *,
+        model: str,
+        messages: Sequence[Mapping[str, Any]],
+        system: Any = "",
+        tools: Sequence[Mapping[str, Any]] = (),
+        **_: Any,
+    ) -> Any:
+        from anthropic.types import Message as AnthropicMessage
+
+        transcript = _from_anthropic(messages)
+        prompt = Prompt(_system_text(system), model, transcript)
+        index = _turn_index(transcript)
+        steps = self._scenario.steps
+        turn = (steps[index] if index < len(steps) else _GIVE_UP)(prompt)
+        if self._latency:
+            time.sleep(self._latency * (0.6 + 0.3 * (index % 3)))
+
+        content: list[dict[str, Any]] = [{"type": "text", "text": turn.text}] if turn.text else []
+        content += [
+            {"type": "tool_use", "id": c.id, "name": c.name, "input": c.arguments}
+            for c in turn.tool_calls
+        ]
+        prompt_chars = len(prompt.system) + len(json.dumps(to_chat_messages(transcript)))
+        prompt_chars += len(json.dumps(list(tools)))
+        return AnthropicMessage.model_validate(
+            {
+                "id": f"msg_mock_{index + 1}",
+                "type": "message",
+                "role": "assistant",
+                "model": model,
+                "content": content,
+                "stop_reason": "tool_use" if turn.tool_calls else "end_turn",
+                "stop_sequence": None,
+                "usage": {
+                    "input_tokens": prompt_chars // 4,
+                    "output_tokens": max(1, len(json.dumps(content)) // 4),
+                },
+            }
+        )
+
+
+def _get(block: Any, key: str) -> Any:
+    """Read a content block that may be a dict or an SDK model."""
+    return block.get(key) if isinstance(block, Mapping) else getattr(block, key, None)
+
+
+def _system_text(system: Any) -> str:
+    if isinstance(system, list):
+        return "\n\n".join(str(_get(b, "text") or "") for b in system)
+    return str(system or "")
+
+
+def _from_anthropic(messages: Sequence[Mapping[str, Any]]) -> list[Message]:
+    """Rebuild the provider-neutral transcript the scenario scripts reason about."""
+    transcript: list[Message] = []
+    tool_names: dict[str, str] = {}
+    for message in messages:
+        content = message["content"]
+        if message["role"] == "assistant":
+            text = "".join(_get(b, "text") or "" for b in content if _get(b, "type") == "text")
+            calls = [
+                ToolCall(_get(b, "id"), _get(b, "name"), dict(_get(b, "input")))
+                for b in content
+                if _get(b, "type") == "tool_use"
+            ]
+            tool_names.update((c.id, c.name) for c in calls)
+            transcript.append(AssistantTurn(text, calls))
+        elif isinstance(content, str):
+            transcript.append(UserMessage(content))
+        else:
+            results = [
+                ToolResult(
+                    _get(b, "tool_use_id"),
+                    tool_names.get(_get(b, "tool_use_id"), ""),
+                    str(_get(b, "content")),
+                    bool(_get(b, "is_error")),
+                )
+                for b in content
+                if _get(b, "type") == "tool_result"
+            ]
+            transcript.append(ToolResults(results))
+    return transcript
+
+
+class MockBackend(AnthropicBackend):
+    """The Anthropic backend, driven by a scripted model instead of the API."""
 
     name = "mock"
 
@@ -172,41 +322,9 @@ class MockBackend:
         if scenario not in SCENARIOS:
             raise ValueError(f"unknown scenario {scenario!r}; choose from {sorted(SCENARIOS)}")
         self.scenario = SCENARIOS[scenario]
-        self.model = model
-        self._latency = latency
-
-    def complete(
-        self, system: str, transcript: Sequence[Message], tools: Sequence[ToolSpec]
-    ) -> AssistantTurn:
-        index = _turn_index(transcript)
-        request = {"system": system, "messages": to_chat_messages(transcript)}
-        with tracewright.span(
-            f"chat {self.model}",
-            kind="llm",
-            input=request,
-            attributes={
-                "gen_ai.provider.name": "mock",
-                "gen_ai.operation.name": "chat",
-                "gen_ai.request.model": self.model,
-            },
-        ) as span:
-            steps = self.scenario.steps
-            turn = (steps[index] if index < len(steps) else _GIVE_UP)(transcript)
-            if self._latency:
-                time.sleep(self._latency * (0.6 + 0.3 * (index % 3)))
-            prompt_chars = len(json.dumps(request)) + sum(
-                len(json.dumps(t.input_schema)) for t in tools
-            )
-            output = to_chat_messages([turn])[0]
-            span.set_attributes(
-                {
-                    "gen_ai.response.model": self.model,
-                    "gen_ai.usage.input_tokens": prompt_chars // 4,
-                    "gen_ai.usage.output_tokens": max(1, len(json.dumps(output)) // 4),
-                    "gen_ai.response.finish_reasons": [
-                        "tool_use" if turn.tool_calls else "end_turn"
-                    ],
-                }
-            )
-            span.set_output(output)
-        return turn
+        super().__init__(
+            model,
+            client=ScriptedAnthropic(self.scenario, latency=latency),
+            max_tokens=1024,
+            provider="mock",
+        )

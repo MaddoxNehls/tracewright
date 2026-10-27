@@ -11,7 +11,7 @@ import os
 import threading
 from collections.abc import Awaitable, Callable, Iterable, Mapping
 from types import TracebackType
-from typing import Any, ParamSpec, TypeVar, cast, overload
+from typing import TYPE_CHECKING, Any, ParamSpec, TypeVar, cast, overload
 
 from tracewright._exporter import (
     DEFAULT_ENDPOINT,
@@ -20,7 +20,12 @@ from tracewright._exporter import (
     HttpExporter,
     NoopExporter,
 )
+from tracewright._replay_state import active_replay
+from tracewright._serialize import to_jsonable
 from tracewright._span import Span, SpanKind, new_trace_id
+
+if TYPE_CHECKING:
+    from tracewright._replay import RecordedCall
 
 logger = logging.getLogger("tracewright")
 
@@ -31,6 +36,8 @@ _current_span: contextvars.ContextVar[Span | None] = contextvars.ContextVar(
     "tracewright_current_span", default=None
 )
 _exporter: Exporter = NoopExporter()
+_api_key: str | None = None
+_endpoint: str = DEFAULT_ENDPOINT
 _state_lock = threading.Lock()
 _atexit_registered = False
 _ATEXIT_FLUSH_TIMEOUT = 2.0
@@ -52,10 +59,10 @@ def init(
     stays a silent no-op: spans are still created so instrumented code runs unchanged,
     but nothing is sent. Calling ``init`` again replaces the previous exporter.
     """
-    global _exporter, _atexit_registered
+    global _exporter, _atexit_registered, _api_key, _endpoint
+    api_key = api_key or os.environ.get("TRACEWRIGHT_API_KEY")
+    endpoint = endpoint or os.environ.get("TRACEWRIGHT_ENDPOINT") or DEFAULT_ENDPOINT
     if exporter is None:
-        api_key = api_key or os.environ.get("TRACEWRIGHT_API_KEY")
-        endpoint = endpoint or os.environ.get("TRACEWRIGHT_ENDPOINT") or DEFAULT_ENDPOINT
         if api_key:
             exporter = HttpExporter(
                 api_key,
@@ -69,6 +76,7 @@ def init(
 
     with _state_lock:
         previous, _exporter = _exporter, exporter
+        _api_key, _endpoint = api_key, endpoint
         if not _atexit_registered:
             atexit.register(shutdown, _ATEXIT_FLUSH_TIMEOUT)
             _atexit_registered = True
@@ -99,6 +107,11 @@ def stats() -> ExporterStats:
 
 def get_current_span() -> Span | None:
     return _current_span.get()
+
+
+def configured_credentials() -> tuple[str | None, str]:
+    """The API key and endpoint from the last :func:`init` (or the environment)."""
+    return _api_key or os.environ.get("TRACEWRIGHT_API_KEY"), _endpoint
 
 
 def _safe_shutdown(exporter: Exporter, timeout: float | None) -> None:
@@ -143,11 +156,14 @@ class SpanContext:
             trace_id=parent.trace_id if parent else new_trace_id(),
             parent_span_id=parent.span_id if parent else None,
             on_end=_export,
+            parent=parent,
         )
         if self._input is not None:
             span.set_input(self._input)
         if self._attributes:
             span.set_attributes(self._attributes)
+        if parent is None and (replay := active_replay.get()) is not None:
+            replay.tag_root(span)
         self._span = span
         self._token = _current_span.set(span)
         return span
@@ -233,7 +249,8 @@ def trace(
 
     Bound arguments become the span input and the return value its output. Exceptions
     mark the span as errored and propagate unchanged. Works bare (``@trace``) or with
-    options (``@trace(kind="tool")``). Generator functions are not supported.
+    options (``@trace(kind="tool")``). Generator functions are not supported. Under
+    :func:`tracewright.replay`, ``kind="tool"`` calls may be served from the recording.
     """
 
     def decorate(fn: Callable[P, R]) -> Callable[P, R]:
@@ -241,16 +258,31 @@ def trace(
         signature = _signature_or_none(fn)
         attributes = {"gen_ai.tool.name": span_name} if kind == "tool" else None
 
-        def open_span(args: tuple[Any, ...], kwargs: dict[str, Any]) -> SpanContext:
-            call_input = _bind_arguments(signature, args, kwargs) if capture_input else None
+        def open_span(call_input: Any) -> SpanContext:
             return SpanContext(span_name, kind, input=call_input, attributes=attributes)
+
+        def bind(args: tuple[Any, ...], kwargs: dict[str, Any]) -> Any:
+            return _bind_arguments(signature, args, kwargs) if capture_input else None
+
+        def recorded_call(call_input: Any) -> RecordedCall | None:
+            """Ask an active replay whether to serve this tool call from the recording."""
+            replay = active_replay.get()
+            if replay is None or kind != "tool":
+                return None
+            return replay.plan_call(
+                ("tool", span_name, to_jsonable(call_input)), servable=capture_output
+            )
 
         if inspect.iscoroutinefunction(fn):
             async_fn = cast(Callable[..., Awaitable[Any]], fn)
 
             @functools.wraps(fn)
             async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
-                with open_span(args, kwargs) as current:
+                call_input = bind(args, kwargs)
+                recorded = recorded_call(call_input)
+                with open_span(call_input) as current:
+                    if recorded is not None:
+                        return recorded.serve(current)
                     result = await async_fn(*args, **kwargs)
                     if capture_output:
                         current.set_output(result)
@@ -260,7 +292,11 @@ def trace(
 
         @functools.wraps(fn)
         def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
-            with open_span(args, kwargs) as current:
+            call_input = bind(args, kwargs)
+            recorded = recorded_call(call_input)
+            with open_span(call_input) as current:
+                if recorded is not None:
+                    return cast(R, recorded.serve(current))
                 result = fn(*args, **kwargs)
                 if capture_output:
                     current.set_output(result)

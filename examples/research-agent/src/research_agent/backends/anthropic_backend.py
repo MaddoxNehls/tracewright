@@ -18,13 +18,18 @@ class AnthropicBackend:
     name = "anthropic"
 
     def __init__(
-        self, model: str = DEFAULT_MODEL, *, client: Any = None, max_tokens: int = 16000
+        self,
+        model: str = DEFAULT_MODEL,
+        *,
+        client: Any = None,
+        max_tokens: int = 16000,
+        provider: str = "anthropic",
     ) -> None:
         if client is None:
             import anthropic
 
             client = anthropic.Anthropic()
-        self._client = tracewright.instrument_anthropic(client)
+        self._client = tracewright.instrument_anthropic(client, provider=provider)
         self.model = model
         self._max_tokens = max_tokens
 

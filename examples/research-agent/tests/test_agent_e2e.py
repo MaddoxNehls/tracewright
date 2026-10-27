@@ -7,7 +7,7 @@ from typing import Any
 import pytest
 from tracewright.testing import InMemoryExporter
 
-from research_agent.agent import MaxStepsExceeded, ResearchAgent
+from research_agent.agent import SYSTEM_PROMPT, MaxStepsExceeded, ResearchAgent
 from research_agent.backends import MockBackend
 
 
@@ -94,7 +94,7 @@ def test_agent_recovers_from_a_tool_error(exporter: InMemoryExporter) -> None:
     assert failed["error"]["type"] == "CalculatorError"
     # The error was fed back to the model as a tool result.
     retry_llm = exporter.by_name("chat mock-1")[3]
-    assert retry_llm["input"]["messages"][-1]["is_error"] is True
+    assert retry_llm["input"]["messages"][-1]["content"][0]["is_error"] is True
     assert "5.6%" in result.answer
 
 
@@ -120,3 +120,25 @@ def test_exceeding_max_steps_marks_the_run_as_error(exporter: InMemoryExporter) 
     assert root["status"] == "error"
     assert root["error"]["type"] == "MaxStepsExceeded"
     assert len(exporter.children_of(root["span_id"])) == 2
+
+
+HINT = "Write calculator expressions with plain numbers only."
+
+
+@pytest.mark.parametrize(
+    ("model", "system_prompt"),
+    [("mock-2", SYSTEM_PROMPT), ("mock-1", f"{SYSTEM_PROMPT}\n\n{HINT}")],
+    ids=["careful-model", "system-hint"],
+)
+def test_plain_numbers_avoid_the_calculator_error(
+    exporter: InMemoryExporter, model: str, system_prompt: str
+) -> None:
+    backend = MockBackend("calculator-recovery", model=model)
+    agent = ResearchAgent(backend, system_prompt=system_prompt)
+
+    result = agent.run(backend.scenario.question)
+
+    (root,) = exporter.roots()
+    assert [s["status"] for s in exporter.by_name("calculator")] == ["ok"]
+    assert len(exporter.children_of(root["span_id"])) == 4
+    assert "5.6%" in result.answer

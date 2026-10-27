@@ -61,6 +61,7 @@ class Span:
         "_status",
         "kind",
         "name",
+        "parent",
         "parent_span_id",
         "span_id",
         "trace_id",
@@ -74,12 +75,15 @@ class Span:
         trace_id: str,
         parent_span_id: str | None,
         on_end: Callable[[Span], None],
+        parent: Span | None = None,
     ) -> None:
         self.name = (name or "span")[:MAX_NAME_LENGTH]
         self.kind: SpanKind = kind
         self.trace_id = trace_id
         self.span_id = new_span_id()
         self.parent_span_id = parent_span_id
+        # The live parent, so replay can find the enclosing step without a registry.
+        self.parent = parent
         self._on_end = on_end
         self._lock = threading.Lock()
         self._attributes: dict[str, Any] = {}

@@ -38,10 +38,12 @@ class ResearchAgent:
         *,
         max_steps: int = 8,
         tags: Sequence[str] = (),
+        system_prompt: str = SYSTEM_PROMPT,
     ) -> None:
         self.backend = backend
         self.toolbox = toolbox or Toolbox()
         self.max_steps = max_steps
+        self.system_prompt = system_prompt
         self._tags = list(tags)
 
     def run(self, question: str) -> AgentResult:
@@ -56,7 +58,7 @@ class ResearchAgent:
             transcript: list[Message] = [UserMessage(question)]
             for step in range(1, self.max_steps + 1):
                 with tracewright.span(f"step-{step}", attributes={"agent.step": step}):
-                    turn = self.backend.complete(SYSTEM_PROMPT, transcript, self.toolbox.specs)
+                    turn = self.backend.complete(self.system_prompt, transcript, self.toolbox.specs)
                     transcript.append(turn)
                     if not turn.tool_calls:
                         run.set_output({"answer": turn.text, "steps": step})

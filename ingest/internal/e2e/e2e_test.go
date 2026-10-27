@@ -62,7 +62,7 @@ func newStack(t *testing.T) *stack {
 		Writers: 2, MaxSpans: 500, MaxWait: 10 * time.Millisecond,
 	}, log, m)
 	h := &api.Handler{
-		Auth: api.NewAuthenticator(st, api.AuthConfig{}), Queue: q, Prices: prices,
+		Auth: api.NewAuthenticator(st, api.AuthConfig{}), Queue: q, Runs: st, Prices: prices,
 		Metrics: m, Gatherer: reg, Log: log,
 	}
 	srv := httptest.NewServer(h.Routes())
@@ -196,3 +196,67 @@ func checkCost(t *testing.T, label string, got, want *float64) {
 func near(a, b float64) bool { return a-b < 1e-9 && b-a < 1e-9 }
 
 func ptr[T any](v T) *T { return &v }
+
+// get fetches path with the given key and decodes a JSON body into out (if non-nil).
+func (s *stack) get(t *testing.T, path, key string, out any) int {
+	t.Helper()
+	req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, s.srv.URL+path, nil)
+	req.Header.Set("Authorization", "Bearer "+key)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if out != nil && resp.StatusCode == http.StatusOK {
+		if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return resp.StatusCode
+}
+
+func TestReadRunEndToEnd(t *testing.T) {
+	s := newStack(t)
+	const root = "1000000000000001"
+	child := wireSpan("2000000000000002", root, "plan", "llm", 10, map[string]any{
+		"gen_ai.provider.name": "anthropic", "gen_ai.request.model": "claude-opus-5-5",
+		"gen_ai.usage.input_tokens": 1000, "gen_ai.usage.output_tokens": 100,
+	})
+	s.post(t, child, wireSpan(root, "", "research-agent", "agent", 0, map[string]any{}))
+	s.drain(t)
+
+	var body struct {
+		Run struct {
+			TraceID   string   `json:"trace_id"`
+			SpanCount int      `json:"span_count"`
+			CostUSD   *float64 `json:"total_cost_usd"`
+		} `json:"run"`
+		Spans []map[string]any `json:"spans"`
+	}
+	if code := s.get(t, "/v1/runs/"+trace, s.key, &body); code != http.StatusOK {
+		t.Fatalf("GET own run: status %d", code)
+	}
+	if body.Run.TraceID != trace || body.Run.SpanCount != 2 || body.Run.CostUSD == nil {
+		t.Errorf("run = %+v", body.Run)
+	}
+	if len(body.Spans) != 2 || body.Spans[0]["span_id"] != root || body.Spans[1]["name"] != "plan" {
+		t.Fatalf("spans = %v", body.Spans)
+	}
+	// What comes back is what was sent: the read API returns the write API's shape.
+	if body.Spans[1]["output"] != "done" || body.Spans[1]["start_time"] != child["start_time"] {
+		t.Errorf("span round trip changed fields: %v", body.Spans[1])
+	}
+
+	// A valid key for a different project must not be able to tell the run exists.
+	otherSlug := "other-" + s.project[:8]
+	if _, err := s.st.CreateProject(t.Context(), otherSlug, "Other", false); err != nil {
+		t.Fatal(err)
+	}
+	otherKey, err := s.st.CreateAPIKey(t.Context(), otherSlug)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if code := s.get(t, "/v1/runs/"+trace, otherKey, nil); code != http.StatusNotFound {
+		t.Errorf("GET with another project's key: status %d, want 404", code)
+	}
+}

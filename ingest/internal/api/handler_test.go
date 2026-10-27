@@ -48,6 +48,7 @@ type testServer struct {
 	queue   *pipeline.Queue
 	metrics *metrics.Metrics
 	keys    *fakeKeys
+	runs    *fakeRuns
 }
 
 func newTestServer(t *testing.T, queueSpans int) *testServer {
@@ -56,15 +57,17 @@ func newTestServer(t *testing.T, queueSpans int) *testServer {
 	m := metrics.New(reg)
 	q := pipeline.NewQueue(queueSpans, 64<<20)
 	keys := &fakeKeys{}
+	runs := &fakeRuns{}
 	h := &Handler{
 		Auth:     NewAuthenticator(keys, AuthConfig{}),
 		Queue:    q,
+		Runs:     runs,
 		Prices:   mustPrices(t),
 		Metrics:  m,
 		Gatherer: reg,
 		Log:      slog.New(slog.DiscardHandler),
 	}
-	return &testServer{handler: h.Routes(), queue: q, metrics: m, keys: keys}
+	return &testServer{handler: h.Routes(), queue: q, metrics: m, keys: keys, runs: runs}
 }
 
 func (s *testServer) post(t *testing.T, body []byte, header map[string]string) *httptest.ResponseRecorder {
