@@ -97,6 +97,7 @@ class HttpExporter(Exporter):
         self._stats = ExporterStats()
         self._pending = 0  # enqueued but not yet exported or failed
         self._pending_cv = threading.Condition()
+        self._flush_requested = False  # guarded by _pending_cv; consumed by the worker
         self._wakeup = threading.Event()
         self._closed = threading.Event()
         # Backoff waits on the closed event so shutdown interrupts it immediately.
@@ -124,14 +125,22 @@ class HttpExporter(Exporter):
 
     def flush(self, timeout: float | None = None) -> bool:
         deadline = None if timeout is None else time.monotonic() + timeout
-        self._wakeup.set()
         with self._pending_cv:
+            self._request_flush()
             while self._pending > 0 and self._worker.is_alive():
                 remaining = None if deadline is None else deadline - time.monotonic()
                 if remaining is not None and remaining <= 0:
                     return False
                 self._pending_cv.wait(remaining)
+                # Spans exported while we waited may have been followed by new ones.
+                self._request_flush()
             return self._pending == 0
+
+    def _request_flush(self) -> None:
+        # Caller holds _pending_cv. The flag is set before the wakeup, and the worker
+        # reads and clears it under the same lock, so a request can't be lost.
+        self._flush_requested = True
+        self._wakeup.set()
 
     def shutdown(self, timeout: float | None = None) -> None:
         self.flush(timeout)
@@ -142,15 +151,21 @@ class HttpExporter(Exporter):
 
     def _run(self) -> None:
         while not self._closed.is_set():
-            self._wakeup.wait(self._flush_interval)
+            timed_out = not self._wakeup.wait(self._flush_interval)
             self._wakeup.clear()
+            with self._pending_cv:
+                force = timed_out or self._flush_requested or self._closed.is_set()
+                self._flush_requested = False
             try:
-                self._drain()
+                self._drain(force)
             except Exception:  # the worker must survive anything
                 logger.exception("tracewright exporter loop failed")
 
-    def _drain(self) -> None:
-        while True:
+    def _drain(self, force: bool) -> None:
+        # A size-triggered wakeup ships only full batches, so spans still being
+        # emitted aren't split into small requests; the interval tick and flush()
+        # ship whatever is left.
+        while force or self._queue.qsize() >= self._batch_size:
             batch: list[Span] = []
             while len(batch) < self._batch_size:
                 try:

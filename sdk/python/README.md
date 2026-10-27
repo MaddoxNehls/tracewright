@@ -90,7 +90,8 @@ run of your agent in the block.
 A step is a span carrying an integer `agent.step` attribute, which is its number:
 
 ```python
-with tracewright.span(f"step-{n}", attributes={"agent.step": n}): ...
+with tracewright.span(f"step-{n}", attributes={"agent.step": n}):
+    ...
 ```
 
 Each LLM or tool call belongs to its innermost enclosing step. Steps must be numbered the
