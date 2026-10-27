@@ -1,0 +1,194 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+/*
+ * Tracewright tokens. Dark is the default theme.
+ * The single accent is aviation "international orange", the color flight
+ * recorders are painted. It marks the brand, the primary action, focus, and
+ * the selected span; nothing else.
+ */
+:root {
+  color-scheme: light;
+  --bg: #f4f5f7;
+  --surface: #ffffff;
+  --surface-2: #eef0f3;
+  --surface-3: #e4e7ec;
+  --border: #e1e4e9;
+  --border-strong: #c9ced6;
+  --fg: #0f141b;
+  --fg-muted: #4a5466;
+  --fg-subtle: #7a8496;
+  --accent: #e2500c;
+  --accent-hover: #c9460a;
+  --accent-fg: #ffffff;
+  --accent-soft: rgb(226 80 12 / 0.1);
+  --ring: rgb(226 80 12 / 0.55);
+
+  --kind-agent: #6250d6;
+  --kind-llm: #2a78d6;
+  --kind-tool: #13976a;
+  --kind-custom: #98a1b0;
+  --ok: #138a4a;
+  --err: #d03b3b;
+  --err-soft: rgb(208 59 59 / 0.08);
+  --err-border: rgb(208 59 59 / 0.3);
+
+  --chart-grid: #e6e8ec;
+  --chart-axis: #8a93a3;
+  --series-1: #2a78d6;
+  --series-2: #eb6834;
+
+  --json-key: #6250d6;
+  --json-string: #0f7b55;
+  --json-number: #b4530a;
+  --json-literal: #2a78d6;
+}
+
+.dark {
+  color-scheme: dark;
+  --bg: #0b0e13;
+  --surface: #10141a;
+  --surface-2: #161b23;
+  --surface-3: #1d232d;
+  --border: #1f2630;
+  --border-strong: #2c3542;
+  --fg: #e6eaf0;
+  --fg-muted: #9aa4b4;
+  --fg-subtle: #677285;
+  --accent: #ff6a1f;
+  --accent-hover: #ff8143;
+  --accent-fg: #160a03;
+  --accent-soft: rgb(255 106 31 / 0.12);
+  --ring: rgb(255 106 31 / 0.6);
+
+  --kind-agent: #9085e9;
+  --kind-llm: #3f8ef0;
+  --kind-tool: #1fae7d;
+  --kind-custom: #5d6879;
+  --ok: #33c27a;
+  --err: #f0595c;
+  --err-soft: rgb(240 89 92 / 0.09);
+  --err-border: rgb(240 89 92 / 0.32);
+
+  --chart-grid: #1c222b;
+  --chart-axis: #677285;
+  --series-1: #3987e5;
+  --series-2: #d95926;
+
+  --json-key: #a99ff0;
+  --json-string: #5fd0a2;
+  --json-number: #f3a86b;
+  --json-literal: #7fb2f5;
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-fg: var(--fg);
+  --color-fg-muted: var(--fg-muted);
+  --color-fg-subtle: var(--fg-subtle);
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-fg: var(--accent-fg);
+  --color-accent-soft: var(--accent-soft);
+  --color-ok: var(--ok);
+  --color-err: var(--err);
+  --color-err-soft: var(--err-soft);
+  --color-err-border: var(--err-border);
+  --color-kind-agent: var(--kind-agent);
+  --color-kind-llm: var(--kind-llm);
+  --color-kind-tool: var(--kind-tool);
+  --color-kind-custom: var(--kind-custom);
+  --font-sans: var(--font-plex-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-plex-mono), ui-monospace, "SFMono-Regular", monospace;
+}
+
+html,
+body {
+  background: var(--bg);
+  color: var(--fg);
+}
+
+body {
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+::selection {
+  background: var(--accent-soft);
+}
+
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Error bars carry a texture as well as a color, so failure never relies on hue alone. */
+.bar-error {
+  background-color: var(--err);
+  background-image: repeating-linear-gradient(
+    135deg,
+    rgb(255 255 255 / 0.28) 0 2px,
+    transparent 2px 5px
+  );
+}
+
+/* Faint engineering grid behind the landing hero. */
+.hero-grid {
+  background-image:
+    linear-gradient(to right, var(--border) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--border) 1px, transparent 1px);
+  background-size: 48px 48px;
+  mask-image: radial-gradient(ellipse 70% 60% at 50% 30%, #000 30%, transparent 80%);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .reveal-bar {
+    transform-origin: left center;
+    animation: reveal-bar 600ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+  }
+}
+
+@keyframes reveal-bar {
+  from {
+    transform: scaleX(0);
+    opacity: 0.4;
+  }
+  to {
+    transform: scaleX(1);
+    opacity: 1;
+  }
+}
+
+.skeleton {
+  background: linear-gradient(90deg, var(--surface-2) 0%, var(--surface-3) 50%, var(--surface-2) 100%);
+  background-size: 200% 100%;
+  border-radius: 4px;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .skeleton {
+    animation: shimmer 1.4s ease-in-out infinite;
+  }
+}
+
+@keyframes shimmer {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -200% 0;
+  }
+}

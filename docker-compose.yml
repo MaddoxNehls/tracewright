@@ -6,7 +6,7 @@ services:
       POSTGRES_PASSWORD: tracewright
       POSTGRES_DB: tracewright
     ports:
-      - "5432:5432"
+      - "5442:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:

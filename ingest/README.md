@@ -21,7 +21,7 @@ curl -H "Authorization: Bearer $KEY" localhost:4318/v1/spans -d '{"spans": [ ...
 Without Docker for the service itself:
 
 ```sh
-export DATABASE_URL=postgres://tracewright:tracewright@localhost:5432/tracewright?sslmode=disable
+export DATABASE_URL=postgres://tracewright:tracewright@localhost:5442/tracewright?sslmode=disable
 go run ./cmd/tracewright-ingest            # serve
 go run ./cmd/tracewright-ingest admin create-project --slug demo --name Demo
 go run ./cmd/tracewright-ingest admin create-key --project demo
