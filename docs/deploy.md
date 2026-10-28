@@ -93,10 +93,14 @@ Without it the dashboard runs read-only, showing public projects only.
 1. **(human)** Create a Vercel account and import the GitHub repository.
 2. Project settings:
    - **Root Directory**: `dashboard`. Framework preset Next.js.
-   - **Install Command**: `npm install -g pnpm@11.0.9 && pnpm install --frozen-lockfile`.
-     Vercel's Corepack support reads `packageManager` only from the repository root, which
-     has no `package.json`, so without this it falls back to an old pnpm that rejects the
-     lockfile (`ERR_INVALID_THIS`).
+   - Leave the install command at its default. Vercel's Corepack support reads
+     `packageManager` only from the repository root, so the root `package.json` exists just to
+     pin `pnpm@11.0.9`; without it Vercel falls back to an old pnpm that rejects the lockfile
+     (`ERR_INVALID_THIS`). Installing pnpm globally in the install command doesn't work: the
+     preinstalled pnpm stays first on `PATH`.
+   - On the Hobby plan, CLI deploys whose git commit author email isn't on your Vercel account
+     are **BLOCKED** with no reason shown. Add that email to the account, or deploy from a copy
+     without `.git` (only the `.vercelignore` allowlist is uploaded).
    - The repo-root `.vercelignore` limits the upload to `dashboard/` and `packages/run-diff/`,
      so local `.env*` files and Python virtualenvs never leave your machine.
    - Leave **Include files outside the root directory in the Build Step** enabled. The

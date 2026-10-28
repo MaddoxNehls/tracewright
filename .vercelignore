@@ -1,9 +1,16 @@
 # Upload only what the dashboard build needs; never secrets or local data.
 /*
 !/dashboard
+!/package.json
 !/packages
 /packages/*
 !/packages/run-diff
+# The dashboard bundles ingest's price table so displayed costs match ingest's.
+!/ingest
+/ingest/*
+!/ingest/internal
+/ingest/internal/*
+!/ingest/internal/pricing
 **/node_modules
 **/.next
 **/dist

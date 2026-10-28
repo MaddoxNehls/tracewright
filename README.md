@@ -5,8 +5,9 @@ diff, replay, and regression-test runs.
 
 ![Run detail: waterfall of an agent run with the LLM call inspector](dashboard/docs/screenshots/run-detail.png)
 
-**Live demo:** _coming soon_ (public, read-only, no sign-in; no live LLM calls, so it costs
-nothing to keep up).
+**Live demo: [tracewright-rosy.vercel.app](https://tracewright-rosy.vercel.app)** (public, read-only,
+no sign-in). The demo project holds generated research-agent runs (`dashboard/scripts/seed.ts`),
+including compare and replay pairs; it makes no live LLM calls, so it costs nothing to keep up.
 
 ## Why
 
@@ -184,7 +185,7 @@ directory.
 
 ## Roadmap
 
-- Deploy the public demo (configuration and steps are ready in [docs/deploy.md](docs/deploy.md))
+- Host ingest publicly (Fly.io config is ready in [docs/deploy.md](docs/deploy.md)) so the demo can receive live traces
 - Streaming LLM calls in both SDKs' instrumentation
 - Replay in the TypeScript SDK
 - An LLM-as-judge scorer (the interface is stubbed)
