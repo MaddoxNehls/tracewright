@@ -9,3 +9,6 @@ __pycache__/
 bin/
 dist/
 coverage/
+
+.vercel
+.env*
