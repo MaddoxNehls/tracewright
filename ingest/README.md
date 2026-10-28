@@ -54,6 +54,7 @@ only its SHA-256 hash and a short display prefix are stored.
 
 ```
 cmd/tracewright-ingest   main: wiring, graceful shutdown, admin subcommands
+cmd/loadgen              load generator: ramps closed-loop clients, reports throughput, latency, 429s, write lag
 internal/api             HTTP handlers, request decoding and validation, API key auth + cache
 internal/pipeline        bounded queue and batch writers
 internal/store           pgx: embedded migrations, COPY write path, runs aggregation, projects/keys
@@ -74,6 +75,12 @@ go test ./...
 
 Integration tests (`internal/store`, `internal/e2e`) start a `postgres:17-alpine`
 container with testcontainers-go and are skipped if Docker isn't available.
+
+## Load test and deploy
+
+[`docs/load-test.md`](../docs/load-test.md) has the method and results: 24,400 spans/s
+sustained on one instance with no 429s and p99 request latency of 25 ms. `fly.toml` here
+is the Fly.io config; see [`docs/deploy.md`](../docs/deploy.md).
 
 ## Design notes
 

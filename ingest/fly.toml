@@ -1,0 +1,51 @@
+# Fly.io config for the ingest service. Deploy from this directory: `fly deploy`.
+# Secrets (set once, never committed): fly secrets set DATABASE_URL=postgres://...
+# See docs/deploy.md.
+
+app = "tracewright-ingest"   # app names are global on Fly; pick your own
+primary_region = "iad"       # near the Neon database's region (us-east-1)
+
+# Graceful shutdown drains the queue within 25 s; give it the full window.
+kill_signal = "SIGTERM"
+kill_timeout = "30s"
+
+[build]
+  dockerfile = "Dockerfile"
+
+# Migrations are embedded and run at startup under a Postgres advisory lock, so several
+# machines booting at once are safe and no release_command is needed.
+
+[env]
+  PORT = "4318"
+  # Writers each hold a database connection for a whole flush; size them to the database,
+  # not to ingest (docs/load-test.md). 4 suits a small Neon compute.
+  WRITERS = "4"
+  # Half the default, to fit the 512 MB machine below with room for the Go runtime.
+  QUEUE_MAX_BYTES = "134217728"
+
+[http_service]
+  internal_port = 4318
+  force_https = true
+  # Ingest buffers accepted spans in memory, so it must not be stopped while idle: a
+  # stopped machine would also drop the SDKs' first requests on wake-up.
+  auto_stop_machines = "off"
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [http_service.concurrency]
+    # Requests are short (median 4.5 ms in-process at 24k spans/s) and bodies are capped
+    # at 5 MB; past these limits Fly queues at the proxy rather than overloading the queue.
+    type = "requests"
+    soft_limit = 200
+    hard_limit = 250
+
+  [[http_service.checks]]
+    method = "GET"
+    path = "/healthz"
+    interval = "15s"
+    timeout = "2s"
+    grace_period = "10s"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
