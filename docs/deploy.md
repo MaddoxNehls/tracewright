@@ -92,8 +92,13 @@ Without it the dashboard runs read-only, showing public projects only.
 
 1. **(human)** Create a Vercel account and import the GitHub repository.
 2. Project settings:
-   - **Root Directory**: `dashboard`. Framework preset Next.js; the default install and
-     build commands are right.
+   - **Root Directory**: `dashboard`. Framework preset Next.js.
+   - **Install Command**: `npm install -g pnpm@11.0.9 && pnpm install --frozen-lockfile`.
+     Vercel's Corepack support reads `packageManager` only from the repository root, which
+     has no `package.json`, so without this it falls back to an old pnpm that rejects the
+     lockfile (`ERR_INVALID_THIS`).
+   - The repo-root `.vercelignore` limits the upload to `dashboard/` and `packages/run-diff/`,
+     so local `.env*` files and Python virtualenvs never leave your machine.
    - Leave **Include files outside the root directory in the Build Step** enabled. The
      dashboard depends on `link:../packages/run-diff`, and `pnpm build` builds that package
      first (its `prebuild` script).
@@ -103,7 +108,6 @@ Without it the dashboard runs read-only, showing public projects only.
    |---|---|
    | `DATABASE_URL` | Neon **pooled** connection string |
    | `DATABASE_POOL_MAX` | `2` (connections per serverless instance; default 5) |
-   | `ENABLE_EXPERIMENTAL_COREPACK` | `1`, so Vercel uses the pnpm version pinned in `dashboard/package.json` (`pnpm@11.0.9`) |
    | `AUTH_SECRET` | `openssl rand -base64 32` **(human: generate and paste)** |
    | `AUTH_GITHUB_ID` / `AUTH_GITHUB_SECRET` | from step 4, if you set it up |
 

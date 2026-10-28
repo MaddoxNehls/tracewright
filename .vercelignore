@@ -1,0 +1,13 @@
+# Upload only what the dashboard build needs; never secrets or local data.
+/*
+!/dashboard
+!/packages
+/packages/*
+!/packages/run-diff
+**/node_modules
+**/.next
+**/dist
+**/.env*
+!**/.env.example
+**/test-results
+**/playwright-report
